@@ -3,3 +3,13 @@ docs/local/
 
 # Local environment variables
 .env
+
+# Gitropolis local data
+.gitropolis/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
