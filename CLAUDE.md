@@ -5,7 +5,7 @@ Adapted from Karpathy-Inspired Claude Code Guidelines:
 https://github.com/multica-ai/andrej-karpathy-skills
 
 Original project metadata lists forrestchang as the author and MIT as the license.
-Modified for Gitropolis to include project-specific commit conventions.
+Modified for Gitropolis to include project-specific commit and branch conventions.
 -->
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
@@ -85,7 +85,19 @@ When creating a commit:
 - Choose the type that best reflects the primary purpose of the change.
 - Keep the description concise and specific.
 
-## 6. Local Project Documents
+## 6. Branch Convention
+
+**Match branch prefixes to the commit convention.**
+
+When creating a branch:
+
+- Use the format `<type>/<short-kebab-case-description>`.
+- Use one of these types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, or `chore`.
+- Use `feat/`, not `feature/`.
+- Do not prepend tool or agent names such as `codex/` or `agent/`.
+- Keep the description concise and specific.
+
+## 7. Local Project Documents
 
 - If `docs/local/` exists, read `docs/local/DESIGN.md` and `docs/local/PROGRESS.md` before planning project work.
 - For data collection, schemas, scoring, or GitHub API work, read `docs/DATA_SPEC.md`.

@@ -117,18 +117,34 @@ Fork the Gitropolis repository.
 Create a branch with a name that clearly describes the purpose of your change.
 
 ```bash
-git checkout -b feature/radar-acceleration-score
+git checkout -b feat/radar-acceleration-score
 ```
 
 Recommended prefixes:
 
 ```text
-feature/   New features
+feat/      New features
 fix/       Bug fixes
 docs/      Documentation changes
+style/     Formatting changes
 refactor/  Refactoring
 test/      Test additions and changes
 chore/     Configuration and maintenance
+```
+
+Use the same type names as the commit convention and write the description in
+short kebab case:
+
+```text
+<type>/<short-kebab-case-description>
+```
+
+Examples:
+
+```text
+feat/github-repository-collector
+fix/duplicate-repository-snapshots
+docs/data-specification
 ```
 
 ### 3. Make Your Changes
