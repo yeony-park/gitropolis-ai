@@ -1,7 +1,7 @@
 name: "📡 Radar Improvement Proposal"
 description: Propose and evaluate an improvement to Radar scoring or growth-signal detection
 title: "[Radar]: "
-labels: []
+labels: ["feat"]
 assignees: []
 
 body:
