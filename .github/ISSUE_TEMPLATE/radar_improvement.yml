@@ -1,0 +1,90 @@
+name: "📡 Radar Improvement Proposal"
+description: Propose and evaluate an improvement to Radar scoring or growth-signal detection
+title: "[Radar]: "
+labels: []
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Radar improvements should be measurable and reproducible.
+        Compare the current and proposed methods over the same data period, and take care to prevent data leakage.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "⚠️ Current Radar Problem"
+      description: Describe the problem with the current Radar algorithm or scoring method.
+      placeholder: Explain the observed behavior, affected repositories or categories, and why it matters.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_calculation
+    attributes:
+      label: "🧮 Proposed Calculation Method"
+      description: Describe the proposed metrics, formulas, or pseudocode in enough detail to evaluate them.
+      placeholder: |
+        Formula or pseudocode:
+        Input data:
+        Normalization:
+        Weights:
+        Thresholds:
+        Exceptional cases:
+    validations:
+      required: true
+
+  - type: input
+    id: data_period
+    attributes:
+      label: "📅 Data Period Used"
+      description: Specify the exact data period used for the experiment.
+      placeholder: "For example: 2026-01-01 to 2026-03-31"
+    validations:
+      required: true
+
+  - type: textarea
+    id: comparison
+    attributes:
+      label: "⚖️ Comparison with the Current Method"
+      description: Compare the current and proposed methods over the same data period.
+      placeholder: Describe the baseline, the proposed result, and the key differences.
+    validations:
+      required: true
+
+  - type: input
+    id: leading_signal_precision
+    attributes:
+      label: "🎯 Leading Signal Precision"
+      description: Report the result for both the current and proposed methods.
+      placeholder: "Current: 00% / Proposed: 00%"
+    validations:
+      required: true
+
+  - type: input
+    id: average_lead_time
+    attributes:
+      label: "⏱️ Average Lead Time"
+      description: Report the result for both the current and proposed methods.
+      placeholder: "Current: 00 days / Proposed: 00 days"
+    validations:
+      required: true
+
+  - type: textarea
+    id: false_positive_cases
+    attributes:
+      label: "🚨 False Positive Cases"
+      description: List false positive cases produced by the proposed method and explain why they were incorrect.
+      placeholder: List the affected repositories and the reason each detection was considered a false positive.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "🔄 Reproduction Steps"
+      description: Provide enough information for another contributor to reproduce the experiment.
+      placeholder: Include the execution steps, configuration values, dependencies, and random seeds.
+    validations:
+      required: true

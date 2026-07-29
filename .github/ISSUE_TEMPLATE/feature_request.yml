@@ -1,0 +1,49 @@
+name: "✨ Feature Request"
+description: Suggest a new feature or an improvement
+title: "[Feature]: "
+labels: []
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Gitropolis.
+        Please describe the problem you want to solve, not only the proposed feature.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "✨ Feature Description"
+      description: Describe the feature or improvement you are proposing.
+      placeholder: A clear and concise description of the proposed feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: "📌 Proposed Work"
+      description: Break the proposal down into concrete tasks when possible.
+      placeholder: |
+        - [ ] Task 1
+        - [ ] Task 2
+        - [ ] Task 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "🎯 Expected Impact"
+      description: Explain who would benefit and why this feature is needed.
+      placeholder: Describe the problem this feature solves and its expected benefits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: "📎 References"
+      description: Add relevant links, designs, API documentation, or alternatives.
+      placeholder: Add any supporting material or related examples.
