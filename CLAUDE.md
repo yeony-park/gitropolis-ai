@@ -85,6 +85,15 @@ When creating a commit:
 - Choose the type that best reflects the primary purpose of the change.
 - Keep the description concise and specific.
 
+## 6. Local Project Documents
+
+- If `docs/local/` exists, read `docs/local/DESIGN.md` and `docs/local/PROGRESS.md` before planning project work.
+- For data collection, schemas, scoring, or GitHub API work, read `docs/DATA_SPEC.md`.
+- Also read `docs/local/DATA_COLLECTION_NOTES.md` when it exists, but treat it as experimental rather than as the public contract.
+- Move only implemented and verified data behavior from local notes into `docs/DATA_SPEC.md`.
+- Update `docs/local/PROGRESS.md` after completing a meaningful development milestone.
+- Do not commit files under `docs/local/`.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
