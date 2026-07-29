@@ -7,6 +7,12 @@ docs/local/
 # Gitropolis local data
 .gitropolis/
 
+# Node.js
+node_modules/
+.next/
+coverage/
+.test-dist/
+
 # Python
 __pycache__/
 *.py[cod]

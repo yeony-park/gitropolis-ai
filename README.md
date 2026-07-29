@@ -119,7 +119,20 @@ Lead time = External coverage date - Radar’s initial detection date
 
 ## Tech Stack
 
-<!-- 기술 스택 확정 후 작성 -->
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-5FA04E?logo=nodedotjs&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=000000)
+![Three.js](https://img.shields.io/badge/Three.js-000000?logo=threedotjs&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?logo=tailwindcss&logoColor=white)
+![Python](https://img.shields.io/badge/Python-Data_Experiments-3776AB?logo=python&logoColor=white)
+
+The Gitropolis product core uses TypeScript. The local CLI runs on Node.js, and
+the web application uses Next.js, React, Three.js, and Tailwind CSS. Python is
+reserved for data exploration and experimental analysis.
+
+Runtime validation with Zod and JSON Schema will be introduced as the snapshot,
+city, and report schemas are implemented and stabilized.
 
 ## Getting Started
 
