@@ -134,6 +134,10 @@ reserved for data exploration and experimental analysis.
 Runtime validation with Zod and JSON Schema will be introduced as the snapshot,
 city, and report schemas are implemented and stabilized.
 
+The local CLI will remain runnable without Docker. If the hosted web application
+later requires independently deployable web, API, worker, or database services,
+those services will be separated with Dockerfiles and Docker Compose.
+
 ## Getting Started
 
 ### Environment Variables
