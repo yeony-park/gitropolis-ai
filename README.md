@@ -155,7 +155,34 @@ arguments.
 
 ### Run
 
-<!-- 실행 방법 확정 후 작성 -->
+Install dependencies and build the CLI:
+
+```bash
+npm install
+npm run build
+```
+
+Initialize local Gitropolis files:
+
+```bash
+node dist/cli.js init
+```
+
+Collect one or more public repositories:
+
+```bash
+node dist/cli.js collect browser-use/browser-use
+```
+
+Without `GITHUB_TOKEN`, the command uses anonymous GitHub API access. When the
+environment variable is present, it uses token authentication. Snapshots are
+written under `.gitropolis/snapshots/` by default. Use `--output` to choose a
+different path:
+
+```bash
+node dist/cli.js collect browser-use/browser-use \
+  --output /tmp/gitropolis-snapshot.json
+```
 
 ## Roadmap
 

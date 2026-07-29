@@ -72,6 +72,48 @@ including the file path, size, and SHA. README content is processed only as
 needed for classification or summarization and is not copied into public
 outputs.
 
+## Implemented collector scope
+
+The `collect` command currently accepts one or more explicit
+`OWNER/REPOSITORY` arguments. For each repository, it requests:
+
+- repository details;
+- detected language byte counts;
+- README metadata;
+- commits on the default branch from the previous 30 days;
+- contributor count metadata.
+
+Requests are made sequentially. After repository collection finishes, the CLI
+requests the current rate-limit state so that the stored and displayed
+remaining count reflects the completed collection.
+
+The commit and contributor counts use the final page number from GitHub's
+pagination links as a count. If the response has no pagination link, the number
+of returned records is used.
+
+## `snapshot-v1`
+
+Each generated snapshot contains:
+
+- `schema_version` and `collected_at`;
+- `source.github_api_version`;
+- `source.authenticated`;
+- `source.coverage_complete`;
+- available `core`, `search`, and `graphql` rate-limit resources;
+- `source.coverage_errors`;
+- the collected repository records.
+
+Repository records contain the verified identity and repository fields listed
+above, language byte counts and shares, README metadata, 30-day commit count,
+and contributor count. The following history-dependent fields are present but
+remain `null` until sufficient snapshots exist:
+
+- `delta_stars_1d`;
+- `delta_stars_7d`;
+- `delta_stars_30d`;
+- `star_velocity_7d`;
+- `star_acceleration`.
+
 ## Historical values
 
 Star growth, velocity, acceleration, and other trend values require historical
@@ -95,7 +137,12 @@ An API failure must never be stored as a numeric zero.
 ## Authentication and secrets
 
 The local CLI may read a GitHub token from the `GITHUB_TOKEN` environment
-variable. It must also support a limited anonymous mode for public data.
+variable. It also supports a limited anonymous mode for public data.
+
+Authenticated collection has been verified with a fine-grained personal access
+token limited to read-only public repository access, with no account or write
+permissions. The verification reported a core limit of 5,000 requests per hour,
+compared with 60 requests per hour for anonymous collection.
 
 Tokens and authorization headers must never be written to:
 
@@ -104,6 +151,10 @@ Tokens and authorization headers must never be written to:
 - logs or exception messages;
 - issues or pull requests;
 - generated snapshots or reports.
+
+Automated tests cover anonymous headers, authenticated headers, API-error
+redaction, CLI-error redaction, and snapshot output. A live authenticated
+collection also verified that the generated snapshot did not contain the token.
 
 Gitropolis collects repository-level public aggregates and avoids retaining
 unnecessary personal data. It does not store stargazer lists, contributor email
