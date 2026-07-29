@@ -4,7 +4,8 @@ import { dirname, resolve } from "node:path";
 
 import { collectSnapshot } from "./collector.js";
 import { initializeProject } from "./commands/init.js";
-import { GitHubApiError, GitHubClient } from "./github/client.js";
+import { GitHubClient } from "./github/client.js";
+import { redactSecrets } from "./security/redact.js";
 import { defaultSnapshotPath, writeSnapshot } from "./snapshot-file.js";
 
 const HELP = `Usage: gitropolis <command> [options]
@@ -24,7 +25,9 @@ export async function run(
     return await runCommand(arguments_);
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    process.stderr.write(`Command failed: ${message}\n`);
+    process.stderr.write(
+      `Command failed: ${redactSecrets(message, [process.env.GITHUB_TOKEN])}\n`,
+    );
     return 1;
   }
 }
@@ -51,7 +54,7 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
       throw new Error("collect requires at least one OWNER/REPOSITORY.");
     }
 
-    const client = new GitHubClient();
+    const client = new GitHubClient({ token: process.env.GITHUB_TOKEN });
     const snapshot = await collectSnapshot(positionals, client);
     const outputPath =
       options.output ??
@@ -62,7 +65,9 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     const writtenPath = await writeSnapshot(snapshot, outputPath);
     const core = snapshot.source.rate_limit?.core;
 
-    process.stdout.write("Authentication: anonymous\n");
+    process.stdout.write(
+      `Authentication: ${client.authenticated ? "token" : "anonymous"}\n`,
+    );
     if (core) {
       process.stdout.write(
         `GitHub API core limit: ${core.remaining}/${core.limit} remaining\n`,

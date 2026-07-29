@@ -138,7 +138,16 @@ city, and report schemas are implemented and stabilized.
 
 ### Environment Variables
 
-<!-- 환경변수 확정 후 작성 -->
+Gitropolis can collect public repository data without authentication. To use a
+higher GitHub API request limit, set a fine-grained personal access token in the
+`GITHUB_TOKEN` environment variable:
+
+```bash
+export GITHUB_TOKEN="your-token"
+```
+
+Never commit the token or include it in Issues, Pull Requests, logs, or command
+arguments.
 
 ### Run
 

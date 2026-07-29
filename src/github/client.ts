@@ -1,3 +1,5 @@
+import { redactSecrets } from "../security/redact.js";
+
 export const GITHUB_API_URL = "https://api.github.com";
 export const GITHUB_API_VERSION = "2026-03-10";
 
@@ -24,13 +26,24 @@ export interface GitHubApiClient {
   ): Promise<GitHubResponse<T>>;
 }
 
-export class GitHubClient implements GitHubApiClient {
-  readonly authenticated = false;
+export interface GitHubClientOptions {
+  baseUrl?: string;
+  fetchImplementation?: typeof fetch;
+  token?: string | undefined;
+}
 
-  constructor(
-    private readonly baseUrl = GITHUB_API_URL,
-    private readonly fetchImplementation: typeof fetch = globalThis.fetch,
-  ) {}
+export class GitHubClient implements GitHubApiClient {
+  readonly authenticated: boolean;
+  private readonly baseUrl: string;
+  private readonly fetchImplementation: typeof fetch;
+  private readonly token: string | undefined;
+
+  constructor(options: GitHubClientOptions = {}) {
+    this.baseUrl = options.baseUrl ?? GITHUB_API_URL;
+    this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch;
+    this.token = options.token?.trim() || undefined;
+    this.authenticated = this.token !== undefined;
+  }
 
   async get<T>(
     path: string,
@@ -41,25 +54,33 @@ export class GitHubClient implements GitHubApiClient {
       url.searchParams.set(name, String(value));
     }
 
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "gitropolis",
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    };
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+
     let response: Response;
     try {
       response = await this.fetchImplementation(url, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "gitropolis",
-          "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        },
+        headers,
         signal: AbortSignal.timeout(30_000),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
-      throw new GitHubApiError(null, `GitHub request failed: ${message}`);
+      throw new GitHubApiError(
+        null,
+        redactSecrets(`GitHub request failed: ${message}`, [this.token]),
+      );
     }
 
     if (!response.ok) {
       throw new GitHubApiError(
         response.status,
-        await readErrorMessage(response),
+        redactSecrets(await readErrorMessage(response), [this.token]),
       );
     }
 

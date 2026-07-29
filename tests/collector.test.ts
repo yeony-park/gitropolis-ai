@@ -138,6 +138,22 @@ test("collector creates an anonymous repository snapshot", async () => {
   assert.equal("login" in collectedRepository, false);
 });
 
+test("snapshot records authentication state without storing a token", async () => {
+  const token = "github_pat_example_secret";
+  const client = clientWith();
+  Object.defineProperty(client, "authenticated", { value: true });
+
+  const snapshot = await collectSnapshot(
+    ["browser-use/browser-use"],
+    client,
+    collectedAt,
+  );
+
+  assert.equal(snapshot.source.authenticated, true);
+  assert.equal(JSON.stringify(snapshot).includes(token), false);
+  assert.equal(JSON.stringify(snapshot).includes("Authorization"), false);
+});
+
 test("a missing README is not a coverage error", async () => {
   const snapshot = await collectSnapshot(
     ["browser-use/browser-use"],
