@@ -1,0 +1,26 @@
+{
+  "name": "gitropolis",
+  "version": "0.1.0",
+  "description": "Explore the momentum of the GitHub AI ecosystem as a city.",
+  "type": "module",
+  "bin": {
+    "gitropolis": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "dev": "npm run build && node dist/cli.js",
+    "test": "tsc --project tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "AGPL-3.0-only",
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
+  }
+}
