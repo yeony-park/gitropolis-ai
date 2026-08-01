@@ -9,7 +9,10 @@ import {
   defaultCandidatePath,
   writeCandidateSnapshot,
 } from "../src/candidate-file.js";
-import { parseDiscoveryArguments } from "../src/cli.js";
+import {
+  parseAnalysisArguments,
+  parseDiscoveryArguments,
+} from "../src/cli.js";
 import type {
   GHArchiveEvent,
   GHArchiveRecord,
@@ -336,6 +339,24 @@ test("discovery retains a candidate when GitHub enrichment fails", async () => {
         source === "github" && target === "/repos/owner/beta",
     ),
     true,
+  );
+});
+
+test("analysis CLI requires a candidate input and bounds README length", () => {
+  assert.deepEqual(parseAnalysisArguments(["--input", "candidate.json"]), {
+    input: "candidate.json",
+    maxReadmeCharacters: 12_000,
+  });
+  assert.throws(() => parseAnalysisArguments([]), /requires --input/);
+  assert.throws(
+    () =>
+      parseAnalysisArguments([
+        "--input",
+        "candidate.json",
+        "--max-readme-characters",
+        "0",
+      ]),
+    /must be between 1 and 100000/,
   );
 });
 

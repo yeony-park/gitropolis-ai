@@ -201,13 +201,25 @@ the GitHub REST collector, and writes `candidate-v1` under
 megabytes. The default one-second interval and 60-second per-file timeout can be
 adjusted with `--request-delay-ms` and `--request-timeout-ms`.
 
+Classify AI relevance and observe keywords from a candidate snapshot:
+
+```bash
+node dist/cli.js analyze \
+  --input .gitropolis/candidates/FROM_TO.json
+```
+
+The command uses the collected description and topics, fetches only the README
+content needed for analysis, and writes `topic-analysis-v1` under
+`.gitropolis/observations/`. Raw README content is not stored in the output.
+
 ## Roadmap
 
 * [x] Candidate GitHub repository collection pipeline
 * [ ] Star time-series data storage
 * [ ] Radar scoring based on growth velocity and acceleration
 * [ ] Filtering of abnormal one-time Star spikes
-* [ ] AI repository classification and summarization
+* [x] Explainable MVP AI repository classification and keyword observation
+* [ ] AI-generated repository summarization
 * [ ] City-style 2D or 3D visualization
 * [ ] Repository detail pages
 * [ ] Links to original GitHub repositories
