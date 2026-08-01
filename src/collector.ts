@@ -68,9 +68,25 @@ export async function collectSnapshot(
   const coverageErrors: CoverageError[] = [];
   const collectedRepositories: RepositorySnapshot[] = [];
   for (const repository of repositoryNames) {
-    collectedRepositories.push(
-      await collectRepository(repository, client, collectedAt, coverageErrors),
-    );
+    try {
+      collectedRepositories.push(
+        await collectRepository(
+          repository,
+          client,
+          collectedAt,
+          coverageErrors,
+        ),
+      );
+    } catch (error) {
+      if (!(error instanceof GitHubApiError)) {
+        throw error;
+      }
+      coverageErrors.push({
+        endpoint: `/repos/${repositoryPath(repository)}`,
+        status: error.status,
+        message: error.message,
+      });
+    }
   }
   const rateLimit = await collectRateLimit(client);
 

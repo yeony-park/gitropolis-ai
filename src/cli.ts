@@ -74,7 +74,7 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
       );
     }
     process.stdout.write(
-      `Collected ${snapshot.repositories.length} repositories\n`,
+      formatCollectionSummary(snapshot.repositories.length, positionals.length),
     );
     process.stdout.write(`Snapshot: ${writtenPath}\n`);
     return 0;
@@ -82,6 +82,13 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
 
   process.stderr.write(`Unknown command: ${command}\n\n${HELP}`);
   return 1;
+}
+
+export function formatCollectionSummary(
+  successfulCount: number,
+  requestedCount: number,
+): string {
+  return `Repositories: ${successfulCount} succeeded, ${requestedCount - successfulCount} failed\n`;
 }
 
 interface ParsedArguments {

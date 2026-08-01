@@ -87,6 +87,12 @@ Requests are made sequentially. After repository collection finishes, the CLI
 requests the current rate-limit state so that the stored and displayed
 remaining count reflects the completed collection.
 
+If a repository-detail request fails, collection continues with the remaining
+repositories. Successfully collected repositories are retained in the
+snapshot, the failed repository endpoint is added to
+`source.coverage_errors`, and the CLI reports successful and failed repository
+counts.
+
 The commit and contributor counts use the final page number from GitHub's
 pagination links as a count. If the response has no pagination link, the number
 of returned records is used.
@@ -129,6 +135,8 @@ An API failure must never be stored as a numeric zero.
 - Missing optional GitHub fields are stored as `null`.
 - Rate-limit responses follow the server-provided retry or reset time.
 - Partial endpoint failures are recorded as incomplete coverage.
+- A repository-detail failure does not discard successful repository records
+  or prevent later repositories from being attempted.
 - A `404` may indicate a rename, transfer, deletion, or visibility change and
   must not immediately create a permanent deletion event.
 - A changed `full_name` with the same repository `id` is treated as a rename or
