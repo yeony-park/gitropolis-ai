@@ -97,6 +97,48 @@ The commit and contributor counts use the final page number from GitHub's
 pagination links as a count. If the response has no pagination link, the number
 of returned records is used.
 
+## GH Archive candidate discovery
+
+The `discover` command accepts a UTC hour through `--from` and processes between
+one and 24 consecutive hourly GH Archive files. Each gzip file is streamed and
+parsed line by line rather than loaded into memory. Hourly files are requested
+sequentially with a default one-second interval and a 60-second timeout per
+file.
+
+Discovery does not use repository names, topics, README text, or other keywords.
+It counts valid `WatchEvent` records by case-insensitive repository name and
+retains the first and last event timestamps observed in the requested window.
+Candidates are ranked by descending event count, then by repository name for a
+deterministic tie break. The default top 10 candidates are enriched by the
+existing GitHub REST collector.
+
+An hourly request failure does not discard events collected from other hours.
+Malformed JSON records are skipped individually, recorded as coverage errors,
+and do not prevent the rest of their hourly file from being processed. A
+candidate is retained even when its GitHub enrichment fails.
+
+An end-to-end verification processed all 24 hourly files for 2026-07-30 and
+enriched the selected repositories. The source contained 22 malformed JSON
+lines, so the output correctly reported incomplete record coverage even though
+all 24 files were processed. The experiment produced ranked repository
+candidates without keyword filters. AI relevance was not evaluated, and the
+result does not yet establish complete star-count accuracy.
+
+## `candidate-v1`
+
+Each candidate snapshot contains:
+
+- a UTC `window.from` and exclusive `window.to`;
+- `source.type` set to `gh-archive`;
+- requested and successfully processed hour counts;
+- total valid WatchEvents and distinct repositories observed;
+- GitHub authentication and rate-limit metadata when enrichment runs;
+- archive, parsing, and GitHub enrichment coverage errors;
+- repositories with `full_name`, `watch_events`, `first_seen_at`, and
+  `last_seen_at`;
+- a nested `github` repository snapshot when enrichment succeeds, otherwise
+  `null`.
+
 ## `snapshot-v1`
 
 Each generated snapshot contains:
@@ -140,6 +182,8 @@ An API failure must never be stored as a numeric zero.
 - An exhausted or long rate limit stops further repository requests while
   preserving repository records collected before the limit.
 - Partial endpoint failures are recorded as incomplete coverage.
+- Missing or malformed GH Archive records are never counted as valid events and
+  are exposed through candidate coverage errors.
 - A repository-detail failure does not discard successful repository records
   or prevent later repositories from being attempted.
 - A `404` may indicate a rename, transfer, deletion, or visibility change and

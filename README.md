@@ -184,9 +184,26 @@ node dist/cli.js collect browser-use/browser-use \
   --output /tmp/gitropolis-snapshot.json
 ```
 
+Discover repositories from a UTC-aligned GH Archive window without keyword
+filters:
+
+```bash
+node dist/cli.js discover \
+  --from 2026-07-30T00:00:00Z \
+  --hours 24 \
+  --top 10
+```
+
+The command streams hourly GH Archive files sequentially, aggregates
+`WatchEvent` records by repository, enriches the highest-ranked candidates with
+the GitHub REST collector, and writes `candidate-v1` under
+`.gitropolis/candidates/`. A 24-hour run may download roughly hundreds of
+megabytes. The default one-second interval and 60-second per-file timeout can be
+adjusted with `--request-delay-ms` and `--request-timeout-ms`.
+
 ## Roadmap
 
-* [ ] Candidate GitHub repository collection pipeline
+* [x] Candidate GitHub repository collection pipeline
 * [ ] Star time-series data storage
 * [ ] Radar scoring based on growth velocity and acceleration
 * [ ] Filtering of abnormal one-time Star spikes
