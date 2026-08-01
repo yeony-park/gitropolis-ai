@@ -16,6 +16,15 @@ import { GHArchiveClient } from "./gh-archive/client.js";
 import { GitHubClient } from "./github/client.js";
 import { redactSecrets } from "./security/redact.js";
 import { defaultSnapshotPath, writeSnapshot } from "./snapshot-file.js";
+import {
+  analyzeCandidates,
+  githubReadmeSource,
+} from "./topic-analysis.js";
+import {
+  defaultTopicAnalysisPath,
+  readCandidateSnapshot,
+  writeTopicAnalysisSnapshot,
+} from "./topic-analysis-file.js";
 
 const HELP = `Usage: gitropolis <command> [options]
 
@@ -23,6 +32,7 @@ Commands:
   init      Initialize local Gitropolis project files
   collect   Collect public GitHub repository metadata
   discover  Discover fast-growing repositories from GH Archive
+  analyze   Classify candidate AI relevance and observe keywords
 
 Options:
   --from ISO_TIME             UTC hour at which discovery starts
@@ -30,6 +40,8 @@ Options:
   --top NUMBER                Number of candidates to enrich (default: 10)
   --request-delay-ms NUMBER   Delay between hourly files (default: 1000)
   --request-timeout-ms NUMBER Timeout for each hourly file (default: 60000)
+  --input PATH                Read a candidate-v1 snapshot
+  --max-readme-characters N   Maximum README prefix to analyze (default: 12000)
   --output PATH               Write output to a specific path
   -h, --help                  Show this help message
 `;
@@ -133,8 +145,135 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     return 0;
   }
 
+  if (command === "analyze") {
+    const options = parseAnalysisArguments(commandArguments);
+    const candidate = await readCandidateSnapshot(options.input);
+    const githubClient = new GitHubClient({ token: process.env.GITHUB_TOKEN });
+    const snapshot = await analyzeCandidates(
+      candidate,
+      githubReadmeSource(githubClient),
+      { maxReadmeCharacters: options.maxReadmeCharacters },
+    );
+    const outputPath =
+      options.output ??
+      defaultTopicAnalysisPath(options.directory ?? process.cwd(), snapshot);
+    const writtenPath = await writeTopicAnalysisSnapshot(snapshot, outputPath);
+    const decisions = countDecisions(snapshot.repositories);
+    const statuses = countCommunityStatuses(snapshot.repositories);
+
+    process.stdout.write(
+      `GitHub authentication: ${githubClient.authenticated ? "token" : "anonymous"}\n`,
+    );
+    process.stdout.write(
+      `AI relevance: ${decisions.aiRelated} related, ${decisions.review} review, ${decisions.notAI} not AI, ${decisions.unavailable} unavailable\n`,
+    );
+    process.stdout.write(
+      `Community pools: ${statuses.emerging} emerging, ${statuses.unknown} unknown\n`,
+    );
+    process.stdout.write(
+      `Analysis coverage errors: ${snapshot.source.coverage_errors.length}\n`,
+    );
+    process.stdout.write(`Topic analysis: ${writtenPath}\n`);
+    return 0;
+  }
+
   process.stderr.write(`Unknown command: ${command}\n\n${HELP}`);
   return 1;
+}
+
+export interface AnalysisCliOptions {
+  directory?: string;
+  input: string;
+  output?: string;
+  maxReadmeCharacters: number;
+}
+
+export function parseAnalysisArguments(
+  arguments_: readonly string[],
+): AnalysisCliOptions {
+  const values: Record<string, string> = {};
+  const supported = new Set([
+    "--directory",
+    "--input",
+    "--output",
+    "--max-readme-characters",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (!argument?.startsWith("--") || !supported.has(argument)) {
+      throw new Error(`Unknown analyze argument: ${argument ?? ""}`);
+    }
+    const value = arguments_[index + 1];
+    if (!value) {
+      throw new Error(`${argument} requires a value.`);
+    }
+    values[argument] = value;
+    index += 1;
+  }
+
+  const input = values["--input"];
+  if (!input) {
+    throw new Error("analyze requires --input.");
+  }
+  const maxReadmeCharacters = integerOption(
+    values["--max-readme-characters"],
+    "--max-readme-characters",
+    12_000,
+  );
+  if (maxReadmeCharacters < 1 || maxReadmeCharacters > 100_000) {
+    throw new Error(
+      "--max-readme-characters must be between 1 and 100000.",
+    );
+  }
+
+  return {
+    ...(values["--directory"]
+      ? { directory: values["--directory"] }
+      : {}),
+    input,
+    ...(values["--output"] ? { output: values["--output"] } : {}),
+    maxReadmeCharacters,
+  };
+}
+
+function countDecisions(
+  repositories: readonly {
+    ai_relevance: { decision: string };
+  }[],
+): {
+  aiRelated: number;
+  review: number;
+  notAI: number;
+  unavailable: number;
+} {
+  return {
+    aiRelated: repositories.filter(
+      ({ ai_relevance: relevance }) => relevance.decision === "ai-related",
+    ).length,
+    review: repositories.filter(
+      ({ ai_relevance: relevance }) => relevance.decision === "review",
+    ).length,
+    notAI: repositories.filter(
+      ({ ai_relevance: relevance }) => relevance.decision === "not-ai",
+    ).length,
+    unavailable: repositories.filter(
+      ({ ai_relevance: relevance }) => relevance.decision === "unavailable",
+    ).length,
+  };
+}
+
+function countCommunityStatuses(
+  repositories: readonly { community_status: string | null }[],
+): { emerging: number; unknown: number } {
+  return {
+    emerging: repositories.filter(
+      ({ community_status: status }) => status === "emerging",
+    ).length,
+    unknown: repositories.filter(
+      ({ community_status: status }) => status === "unknown",
+    ).length,
+  };
 }
 
 export interface DiscoveryCliOptions {

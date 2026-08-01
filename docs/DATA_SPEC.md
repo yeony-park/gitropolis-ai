@@ -139,6 +139,71 @@ Each candidate snapshot contains:
 - a nested `github` repository snapshot when enrichment succeeds, otherwise
   `null`.
 
+## AI relevance and keyword observation
+
+The `analyze` command reads an existing `candidate-v1` snapshot. It reuses the
+collected repository description and topics and requests README content only
+when README metadata is present. By default, at most the first 12,000 README
+characters are processed. Raw README content is never written to the analysis
+output.
+
+The initial `ai-relevance-rules-v1` methodology is deterministic and
+explainable. It normalizes aliases and hyphenation, observes GitHub topics, and
+extracts AI-oriented terms and compounds from descriptions and README text.
+The keyword list is not a discovery filter: terms such as `graph-rag` and
+`agentic-rag` can be observed after a repository has already entered the GH
+Archive candidate set.
+
+Each keyword observation contains:
+
+- `observed_at`;
+- the stable numeric `repository_id`;
+- normalized `keyword_id`;
+- `source` as `topics`, `description`, or `readme`;
+- `occurrence_count` within that source;
+- source confidence of `0.95`, `0.80`, or `0.65`, respectively.
+
+AI relevance evidence contributes `0.65` from a topic, `0.45` from a
+description, or `0.30` from README text, with per-source caps of `0.80`, `0.60`,
+and `0.45`. A total score of at least `0.50` is `ai-related`, a score from
+`0.25` up to but excluding `0.50` is `review`, and a lower score is `not-ai`.
+These are provisional MVP rules, not a measured precision claim.
+
+An AI-related repository is placed in the `unknown` pool unless a non-broad
+keyword is observed in at least five distinct AI-related repositories in the
+same snapshot. Repositories sharing such a keyword are marked provisional
+`emerging`. This does not promote a community to `active` or replace the later
+multi-week lifecycle criteria.
+
+A missing GitHub enrichment produces an `unavailable` assessment while
+preserving the candidate. A README request failure preserves classification
+from available descriptions and topics, marks analysis coverage incomplete, and
+adds the failure to `source.coverage_errors`. A rate limit stops later README
+requests without stopping description and topic analysis.
+
+### `topic-analysis-v1`
+
+Each topic analysis snapshot contains:
+
+- the observation timestamp and original candidate window;
+- the candidate and methodology schema versions;
+- GitHub authentication, original candidate coverage and errors, and combined
+  analysis coverage metadata;
+- repository identity, AI relevance score, decision, and evidence;
+- provisional `unknown` or `emerging` status for AI-related repositories;
+- time-stamped `KeywordObservation` records.
+
+An authenticated end-to-end check analyzed the three leading repositories from
+the 2026-07-30 GH Archive experiment with complete README coverage. Two were
+classified `ai-related`, while one remained in `review`; no repeated specific
+keyword existed in the three-repository sample, so no repository was marked
+`emerging`. The analysis step had no coverage errors, while combined coverage
+remained incomplete because the input candidate snapshot contained malformed GH
+Archive records. Network-free tests separately verify `graph-rag` repeated
+across five repositories and a single-repository `agentic-rag` observation.
+This check establishes technical feasibility only and is not a representative
+accuracy benchmark.
+
 ## `snapshot-v1`
 
 Each generated snapshot contains:
