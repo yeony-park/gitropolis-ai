@@ -1,7 +1,7 @@
 # Gitropolis Data Specification
 
 > Status: Early public contract
-> Last updated: 2026-07-30
+> Last updated: 2026-08-02
 > GitHub REST API version: `2026-03-10`
 
 This document contains data behavior that has been implemented or verified well
@@ -133,7 +133,12 @@ An API failure must never be stored as a numeric zero.
 ## Error and coverage rules
 
 - Missing optional GitHub fields are stored as `null`.
-- Rate-limit responses follow the server-provided retry or reset time.
+- Rate-limit responses use `Retry-After` when available and otherwise use
+  `X-RateLimit-Reset`.
+- Short rate-limit delays are retried at most twice. Delays longer than 60
+  seconds are not awaited automatically.
+- An exhausted or long rate limit stops further repository requests while
+  preserving repository records collected before the limit.
 - Partial endpoint failures are recorded as incomplete coverage.
 - A repository-detail failure does not discard successful repository records
   or prevent later repositories from being attempted.

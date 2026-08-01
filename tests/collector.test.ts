@@ -251,3 +251,34 @@ test("collector preserves two successes when one repository fails", async () => 
     "Repositories: 2 succeeded, 1 failed\n",
   );
 });
+
+test("collector stops on a rate limit and preserves earlier repositories", async () => {
+  const snapshot = await collectSnapshot(
+    [
+      "browser-use/browser-use",
+      "rate-limited/repository",
+      "not-attempted/repository",
+    ],
+    clientWith({
+      "/repos/rate-limited/repository": new GitHubApiError(
+        429,
+        "GitHub API returned 429: rate limit exceeded",
+        { rateLimited: true, retryAfterMs: 3_600_000 },
+      ),
+    }),
+    collectedAt,
+  );
+
+  assert.deepEqual(
+    snapshot.repositories.map(({ full_name: fullName }) => fullName),
+    ["browser-use/browser-use"],
+  );
+  assert.equal(snapshot.source.rate_limit, null);
+  assert.deepEqual(snapshot.source.coverage_errors, [
+    {
+      endpoint: "/repos/rate-limited/repository",
+      status: 429,
+      message: "GitHub API returned 429: rate limit exceeded",
+    },
+  ]);
+});

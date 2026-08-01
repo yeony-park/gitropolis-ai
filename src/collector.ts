@@ -67,6 +67,7 @@ export async function collectSnapshot(
   const repositoryNames = repositories.map(validateRepositoryName);
   const coverageErrors: CoverageError[] = [];
   const collectedRepositories: RepositorySnapshot[] = [];
+  let stoppedByRateLimit = false;
   for (const repository of repositoryNames) {
     try {
       collectedRepositories.push(
@@ -82,13 +83,18 @@ export async function collectSnapshot(
         throw error;
       }
       coverageErrors.push({
-        endpoint: `/repos/${repositoryPath(repository)}`,
+        endpoint:
+          error.endpoint ?? `/repos/${repositoryPath(repository)}`,
         status: error.status,
         message: error.message,
       });
+      if (error.rateLimited) {
+        stoppedByRateLimit = true;
+        break;
+      }
     }
   }
-  const rateLimit = await collectRateLimit(client);
+  const rateLimit = stoppedByRateLimit ? null : await collectRateLimit(client);
 
   return {
     schema_version: "snapshot-v1",
@@ -221,6 +227,9 @@ async function optionalRequest<T>(
     return await client.get<T>(path, parameters);
   } catch (error) {
     if (!(error instanceof GitHubApiError)) {
+      throw error;
+    }
+    if (error.rateLimited) {
       throw error;
     }
     if (missingIsNormal && error.status === 404) {
