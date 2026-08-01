@@ -5,6 +5,7 @@ import {
   collectSnapshot,
   validateRepositoryName,
 } from "../src/collector.js";
+import { formatCollectionSummary } from "../src/cli.js";
 import {
   GitHubApiError,
   type GitHubApiClient,
@@ -100,6 +101,32 @@ function clientWith(
   });
 }
 
+function successfulRepositoryResponses(
+  fullName: string,
+  id: number,
+): Readonly<Record<string, StubValue>> {
+  const path = `/repos/${fullName}`;
+  return {
+    [path]: response({
+      ...repository,
+      id,
+      node_id: `repository-${id}`,
+      full_name: fullName,
+      html_url: `https://github.com/${fullName}`,
+    }),
+    [`${path}/languages`]: response({ TypeScript: 100 }),
+    [`${path}/readme`]: response({
+      name: "README.md",
+      path: "README.md",
+      size: 100,
+      sha: `readme-${id}`,
+      html_url: `https://github.com/${fullName}/blob/main/README.md`,
+    }),
+    [`${path}/commits`]: response([]),
+    [`${path}/contributors`]: response([]),
+  };
+}
+
 test("repository validation accepts OWNER/REPOSITORY", () => {
   assert.equal(
     validateRepositoryName("browser-use/browser-use"),
@@ -188,4 +215,39 @@ test("an optional endpoint failure marks coverage incomplete", async () => {
     "/repos/browser-use/browser-use/languages",
   );
   assert.equal(snapshot.repositories[0]?.language_bytes, null);
+});
+
+test("collector preserves two successes when one repository fails", async () => {
+  const snapshot = await collectSnapshot(
+    [
+      "browser-use/browser-use",
+      "missing/repository",
+      "example/second-success",
+    ],
+    clientWith({
+      "/repos/missing/repository": new GitHubApiError(
+        500,
+        "GitHub API returned 500: temporary failure",
+      ),
+      ...successfulRepositoryResponses("example/second-success", 2),
+    }),
+    collectedAt,
+  );
+
+  assert.deepEqual(
+    snapshot.repositories.map(({ full_name: fullName }) => fullName),
+    ["browser-use/browser-use", "example/second-success"],
+  );
+  assert.equal(snapshot.source.coverage_complete, false);
+  assert.deepEqual(snapshot.source.coverage_errors, [
+    {
+      endpoint: "/repos/missing/repository",
+      status: 500,
+      message: "GitHub API returned 500: temporary failure",
+    },
+  ]);
+  assert.equal(
+    formatCollectionSummary(snapshot.repositories.length, 3),
+    "Repositories: 2 succeeded, 1 failed\n",
+  );
 });
