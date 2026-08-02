@@ -201,7 +201,48 @@ the GitHub REST collector, and writes `candidate-v1` under
 megabytes. The default one-second interval and 60-second per-file timeout can be
 adjusted with `--request-delay-ms` and `--request-timeout-ms`.
 
-Classify AI relevance and observe keywords from a candidate snapshot:
+Build a daily activity series for up to seven complete UTC days without cutting
+the repository set to a top-N list:
+
+```bash
+node dist/cli.js backfill \
+  --from 2026-07-27T00:00:00Z \
+  --days 7
+```
+
+The raw `activity-series-v1` snapshot preserves every observed repository. Add
+current GitHub metadata only for repositories that meet a configurable daily
+activity floor. The default Main Radar screening selects repositories with at
+least five `WatchEvent` records in any single UTC day:
+
+```bash
+node dist/cli.js enrich-activity \
+  --input .gitropolis/activity/FROM_TO.json \
+  --min-daily-watch-events 5
+```
+
+For higher-recall emerging-keyword research, use a separate Scout pass that
+keeps repositories with at least three events across the full window and
+requests only description and topics:
+
+```bash
+node dist/cli.js enrich-activity \
+  --input .gitropolis/activity/FROM_TO.json \
+  --min-window-watch-events 3 \
+  --metadata-profile screening
+```
+
+The `screening` profile makes one repository-detail request per selected
+repository. The `classification` profile also records README metadata, while
+the `full` profile additionally collects language, commit, and contributor
+activity. Interrupted enrichment can resume from its previous output without
+requesting successful repositories again.
+
+Both long-running commands print progress while preserving partial coverage and
+successful repository results.
+
+Classify AI relevance and observe keywords from a candidate or enriched
+activity-series snapshot:
 
 ```bash
 node dist/cli.js analyze \
@@ -215,7 +256,8 @@ content needed for analysis, and writes `topic-analysis-v1` under
 ## Roadmap
 
 * [x] Candidate GitHub repository collection pipeline
-* [ ] Star time-series data storage
+* [x] GH Archive WatchEvent daily activity-series storage
+* [ ] Star snapshot deltas and acceleration
 * [ ] Radar scoring based on growth velocity and acceleration
 * [ ] Filtering of abnormal one-time Star spikes
 * [x] Explainable MVP AI repository classification and keyword observation

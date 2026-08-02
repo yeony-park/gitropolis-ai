@@ -1,7 +1,7 @@
 # Gitropolis Data Specification
 
 > Status: Early public contract
-> Last updated: 2026-08-02
+> Last updated: 2026-08-03
 > GitHub REST API version: `2026-03-10`
 
 This document contains data behavior that has been implemented or verified well
@@ -139,9 +139,61 @@ Each candidate snapshot contains:
 - a nested `github` repository snapshot when enrichment succeeds, otherwise
   `null`.
 
+## Seven-day activity backfill
+
+The `backfill` command accepts a UTC midnight through `--from` and processes
+between one and seven complete UTC days. It requests all 24 hourly GH Archive
+files for each day and writes `activity-series-v1` without applying a top-N
+repository cutoff. Daily progress includes processed hours and observed
+`WatchEvent` counts.
+
+Raw activity collection and current GitHub metadata enrichment are separate
+steps. `enrich-activity` reads an existing activity series and supports either
+a minimum count in any single UTC day or a minimum total across the complete
+window. The default Main Radar screening floor is five events in one UTC day.
+An Emerging Scout pass can separately use a three-event window total. These are
+enrichment filters, not breakout or momentum scores.
+
+The `screening` metadata profile requests repository details only, including
+stars, forks, topics, and description. The `classification` profile also
+records README metadata and SHA. The `full` profile additionally records
+language distribution, 30-day commit count, and contributor count.
+Repositories below the floor remain in the activity series with
+`metadata_selected=false` and `current=null`. A failed GitHub request does not
+remove the repository's GH Archive history. Re-running enrichment on a partial
+snapshot with the same profile reuses successful repository metadata and
+requests only missing selected repositories.
+
+### `activity-series-v1`
+
+Each activity-series snapshot contains:
+
+- the UTC `window.from`, exclusive `window.to`, and number of days;
+- archive and metadata coverage reported separately;
+- requested and collected hour counts, observed WatchEvents, and distinct
+  repositories;
+- per-day hour coverage and WatchEvent totals;
+- every observed repository's window total, first and last observation time,
+  and daily counts;
+- `observed_watch_velocity_per_day` only when archive coverage is complete,
+  otherwise `null`;
+- metadata-selection method, threshold, profile, selected count, collected
+  count, and collection time after enrichment;
+- archive and GitHub coverage errors with their source identified.
+
+An end-to-end run requested 168 hours from 2026-07-27 through 2026-08-02. At
+the time of the run, the last eight UTC hours of 2026-08-02 had not yet been
+published by GH Archive, so 160 hours were available. The partial snapshot
+retained 7,000 valid WatchEvents across 5,274 repositories and correctly left
+velocity values as `null`. The then-current daily floor of three selected 104 repositories;
+current GitHub metadata was collected for 100, with failures retained as
+coverage errors. These sample counts demonstrate behavior, not a stable product
+benchmark.
+
 ## AI relevance and keyword observation
 
-The `analyze` command reads an existing `candidate-v1` snapshot. It reuses the
+The `analyze` command reads an existing `candidate-v1` or enriched
+`activity-series-v1` snapshot. It reuses the
 collected repository description and topics and requests README content only
 when README metadata is present. By default, at most the first 12,000 README
 characters are processed. Raw README content is never written to the analysis
@@ -153,6 +205,18 @@ extracts AI-oriented terms and compounds from descriptions and README text.
 The keyword list is not a discovery filter: terms such as `graph-rag` and
 `agentic-rag` can be observed after a repository has already entered the GH
 Archive candidate set.
+
+Analysis records a keyword census across every input repository, including
+repositories that the current classifier labels `not-ai`. The census reports
+the number of analyzed repositories, repositories with observations, source
+observation records, unique keywords, classifier-evidence keywords, and each
+keyword's repository count, occurrence count, and sources. This prevents the
+provisional rule classifier from silently discarding possible emerging terms.
+
+The classifier boundary is provider-neutral and identifies the classifier kind
+and methodology version in the output. The rule implementation is the current
+default; a live model provider, model, budget, and data policy have not yet been
+selected.
 
 Each keyword observation contains:
 
@@ -191,7 +255,8 @@ Each topic analysis snapshot contains:
   analysis coverage metadata;
 - repository identity, AI relevance score, decision, and evidence;
 - provisional `unknown` or `emerging` status for AI-related repositories;
-- time-stamped `KeywordObservation` records.
+- time-stamped `KeywordObservation` records;
+- an all-repository keyword census and classifier kind.
 
 An authenticated end-to-end check analyzed the three leading repositories from
 the 2026-07-30 GH Archive experiment with complete README coverage. Two were
@@ -242,6 +307,10 @@ An API failure must never be stored as a numeric zero.
 - Missing optional GitHub fields are stored as `null`.
 - Rate-limit responses use `Retry-After` when available and otherwise use
   `X-RateLimit-Reset`.
+- A `403` is treated as rate-limited only when `Retry-After` is present,
+  `X-RateLimit-Remaining` is zero, or the response explicitly identifies a
+  rate or abuse limit. `X-RateLimit-Reset` alone is not sufficient because
+  ordinary repository-access failures also include it.
 - Short rate-limit delays are retried at most twice. Delays longer than 60
   seconds are not awaited automatically.
 - An exhausted or long rate limit stops further repository requests while
