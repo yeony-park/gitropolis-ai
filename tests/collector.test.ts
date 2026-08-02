@@ -142,10 +142,14 @@ test("repository validation rejects an invalid name", () => {
 });
 
 test("collector creates an anonymous repository snapshot", async () => {
+  const progress: string[] = [];
   const snapshot = await collectSnapshot(
     ["browser-use/browser-use"],
     clientWith(),
     collectedAt,
+    (processed, total, name) => {
+      progress.push(`${processed}/${total}:${name}`);
+    },
   );
 
   assert.equal(snapshot.source.authenticated, false);
@@ -163,6 +167,77 @@ test("collector creates an anonymous repository snapshot", async () => {
   assert.equal(collectedRepository.contributors_count, 334);
   assert.equal(collectedRepository.delta_stars_30d, null);
   assert.equal("login" in collectedRepository, false);
+  assert.deepEqual(progress, ["1/1:browser-use/browser-use"]);
+});
+
+test("classification profile skips development activity endpoints", async () => {
+  const snapshot = await collectSnapshot(
+    ["browser-use/browser-use"],
+    clientWith({
+      "/repos/browser-use/browser-use/languages": new GitHubApiError(
+        500,
+        "languages endpoint must not be called",
+      ),
+      "/repos/browser-use/browser-use/commits": new GitHubApiError(
+        500,
+        "commits endpoint must not be called",
+      ),
+      "/repos/browser-use/browser-use/contributors": new GitHubApiError(
+        500,
+        "contributors endpoint must not be called",
+      ),
+    }),
+    collectedAt,
+    undefined,
+    "classification",
+  );
+
+  const collectedRepository = snapshot.repositories[0];
+  assert.ok(collectedRepository);
+  assert.equal(snapshot.source.coverage_complete, true);
+  assert.equal(collectedRepository.primary_language, "Python");
+  assert.equal(collectedRepository.readme?.sha, "readme-sha");
+  assert.equal(collectedRepository.language_bytes, null);
+  assert.equal(collectedRepository.language_share, null);
+  assert.equal(collectedRepository.commits_30d, null);
+  assert.equal(collectedRepository.contributors_count, null);
+});
+
+test("screening profile requests only repository details", async () => {
+  const snapshot = await collectSnapshot(
+    ["browser-use/browser-use"],
+    clientWith({
+      "/repos/browser-use/browser-use/readme": new GitHubApiError(
+        500,
+        "README endpoint must not be called",
+      ),
+      "/repos/browser-use/browser-use/languages": new GitHubApiError(
+        500,
+        "languages endpoint must not be called",
+      ),
+      "/repos/browser-use/browser-use/commits": new GitHubApiError(
+        500,
+        "commits endpoint must not be called",
+      ),
+      "/repos/browser-use/browser-use/contributors": new GitHubApiError(
+        500,
+        "contributors endpoint must not be called",
+      ),
+    }),
+    collectedAt,
+    undefined,
+    "screening",
+  );
+
+  const collectedRepository = snapshot.repositories[0];
+  assert.ok(collectedRepository);
+  assert.equal(snapshot.source.coverage_complete, true);
+  assert.equal(collectedRepository.description, repository.description);
+  assert.deepEqual(collectedRepository.topics, repository.topics);
+  assert.equal(collectedRepository.readme, null);
+  assert.equal(collectedRepository.language_bytes, null);
+  assert.equal(collectedRepository.commits_30d, null);
+  assert.equal(collectedRepository.contributors_count, null);
 });
 
 test("snapshot records authentication state without storing a token", async () => {

@@ -1,8 +1,12 @@
-import { collectSnapshot } from "./collector.js";
+import {
+  collectSnapshot,
+  type CollectionProfile,
+} from "./collector.js";
 import type {
   GHArchiveEvent,
   GHArchiveSource,
 } from "./gh-archive/client.js";
+import { parseWatchEvent } from "./gh-archive/watch-event.js";
 import type { GitHubApiClient } from "./github/client.js";
 import type {
   CandidateCoverageError,
@@ -165,12 +169,14 @@ export async function discoverCandidates(
 
 export function githubCollectorEnricher(
   client: GitHubApiClient,
+  onProgress?: (processed: number, total: number, repository: string) => void,
+  profile: CollectionProfile = "full",
 ): (
   repositories: readonly string[],
   collectedAt: Date,
 ) => Promise<Snapshot> {
   return (repositories, collectedAt) =>
-    collectSnapshot(repositories, client, collectedAt);
+    collectSnapshot(repositories, client, collectedAt, onProgress, profile);
 }
 
 function recordWatchEvent(
@@ -178,52 +184,36 @@ function recordWatchEvent(
   event: GHArchiveEvent,
   hour: Date,
 ): string | null {
-  if (event.type !== "WatchEvent") {
+  const parsed = parseWatchEvent(event, hour);
+  if (parsed.kind === "ignored") {
     return null;
   }
-  if (event.payload?.action !== "started") {
-    return "WatchEvent payload.action must be 'started'";
-  }
-  if (typeof event.repo?.name !== "string") {
-    return "WatchEvent repo.name must be a repository name";
-  }
-  if (typeof event.created_at !== "string") {
-    return "WatchEvent created_at must be an ISO timestamp";
+  if (parsed.kind === "invalid") {
+    return parsed.message;
   }
 
-  const timestamp = Date.parse(event.created_at);
-  if (!Number.isFinite(timestamp)) {
-    return "WatchEvent created_at must be an ISO timestamp";
-  }
-  if (!isRepositoryName(event.repo.name)) {
-    return "WatchEvent repo.name must be a repository name";
-  }
-  if (timestamp < hour.getTime() || timestamp >= hour.getTime() + HOUR_MS) {
-    return "WatchEvent created_at is outside its hourly archive window";
-  }
-
-  const key = event.repo.name.toLowerCase();
+  const key = parsed.fullName.toLowerCase();
   const existing = accumulators.get(key);
   if (!existing) {
     accumulators.set(key, {
-      fullName: event.repo.name,
+      fullName: parsed.fullName,
       watchEvents: 1,
-      firstSeenAt: event.created_at,
-      firstSeenTime: timestamp,
-      lastSeenAt: event.created_at,
-      lastSeenTime: timestamp,
+      firstSeenAt: parsed.createdAt,
+      firstSeenTime: parsed.timestamp,
+      lastSeenAt: parsed.createdAt,
+      lastSeenTime: parsed.timestamp,
     });
     return null;
   }
 
   existing.watchEvents += 1;
-  if (timestamp < existing.firstSeenTime) {
-    existing.firstSeenAt = event.created_at;
-    existing.firstSeenTime = timestamp;
+  if (parsed.timestamp < existing.firstSeenTime) {
+    existing.firstSeenAt = parsed.createdAt;
+    existing.firstSeenTime = parsed.timestamp;
   }
-  if (timestamp > existing.lastSeenTime) {
-    existing.lastSeenAt = event.created_at;
-    existing.lastSeenTime = timestamp;
+  if (parsed.timestamp > existing.lastSeenTime) {
+    existing.lastSeenAt = parsed.createdAt;
+    existing.lastSeenTime = parsed.timestamp;
   }
   return null;
 }
@@ -262,12 +252,6 @@ function compareNames(left: string, right: string): number {
     return 1;
   }
   return 0;
-}
-
-function isRepositoryName(value: string): boolean {
-  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+$/.test(
-    value,
-  );
 }
 
 function statusFromError(error: unknown): number | null {

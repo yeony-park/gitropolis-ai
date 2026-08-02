@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   analyzeCandidates,
   githubReadmeSource,
+  type AIRelevanceClassifier,
   type RepositoryReadmeSource,
 } from "../src/topic-analysis.js";
 import { GitHubApiError, GitHubClient } from "../src/github/client.js";
@@ -348,4 +349,79 @@ test("GitHub README source decodes base64 content", async () => {
   const readme = await githubReadmeSource(client).getReadme("owner/repository");
 
   assert.equal(readme, "GraphRAG README");
+});
+
+test("keyword census includes observations from repositories classified not AI", async () => {
+  const snapshot = await analyzeCandidates(
+    candidateSnapshot([
+      candidateRepository("owner/security-tool", 1, {
+        topics: ["security", "devsecops"],
+        hasReadme: false,
+      }),
+    ]),
+    stubReadmes({}),
+    { observedAt },
+  );
+
+  assert.equal(snapshot.repositories[0]?.ai_relevance.decision, "not-ai");
+  assert.equal(snapshot.keyword_census.repositories_analyzed, 1);
+  assert.equal(snapshot.keyword_census.repositories_with_observations, 1);
+  assert.equal(
+    snapshot.keyword_census.keywords.some(
+      ({ keyword_id: keyword }) => keyword === "security",
+    ),
+    true,
+  );
+});
+
+test("keyword normalization treats object prototype names as strings", async () => {
+  const snapshot = await analyzeCandidates(
+    candidateSnapshot([
+      candidateRepository("owner/constructor", 1, {
+        topics: ["constructor"],
+      }),
+    ]),
+    stubReadmes({}),
+    { observedAt },
+  );
+
+  assert.equal(
+    snapshot.repositories[0]?.observations[0]?.keyword_id,
+    "constructor",
+  );
+});
+
+test("analysis accepts a provider-neutral model classifier", async () => {
+  const classifier: AIRelevanceClassifier = {
+    kind: "model",
+    version: "test-model-v1",
+    async classify(input) {
+      assert.equal(input.fullName, "owner/repository");
+      assert.equal(input.readme, "Calendar automation README");
+      return {
+        score: 0.9,
+        decision: "ai-related",
+        evidence: [],
+      };
+    },
+  };
+  const snapshot = await analyzeCandidates(
+    candidateSnapshot([
+      candidateRepository("owner/repository", 1, {
+        description: "A calendar automation tool.",
+      }),
+    ]),
+    stubReadmes({
+      "owner/repository": "Calendar automation README",
+    }),
+    { classifier, observedAt },
+  );
+
+  assert.equal(snapshot.source.classifier_kind, "model");
+  assert.equal(snapshot.methodology_version, "test-model-v1");
+  assert.equal(snapshot.repositories[0]?.ai_relevance.decision, "ai-related");
+  assert.equal(
+    JSON.stringify(snapshot).includes("Calendar automation README"),
+    false,
+  );
 });

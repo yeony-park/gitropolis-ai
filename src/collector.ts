@@ -12,6 +12,8 @@ import type {
   Snapshot,
 } from "./types/snapshot.js";
 
+export type CollectionProfile = "full" | "classification" | "screening";
+
 const REPOSITORY_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+$/;
 
@@ -63,12 +65,15 @@ export async function collectSnapshot(
   repositories: readonly string[],
   client: GitHubApiClient,
   collectedAt = new Date(),
+  onProgress?: (processed: number, total: number, repository: string) => void,
+  profile: CollectionProfile = "full",
 ): Promise<Snapshot> {
   const repositoryNames = repositories.map(validateRepositoryName);
   const coverageErrors: CoverageError[] = [];
   const collectedRepositories: RepositorySnapshot[] = [];
   let stoppedByRateLimit = false;
-  for (const repository of repositoryNames) {
+  for (const [index, repository] of repositoryNames.entries()) {
+    let stopAfterRepository = false;
     try {
       collectedRepositories.push(
         await collectRepository(
@@ -76,6 +81,7 @@ export async function collectSnapshot(
           client,
           collectedAt,
           coverageErrors,
+          profile,
         ),
       );
     } catch (error) {
@@ -90,8 +96,12 @@ export async function collectSnapshot(
       });
       if (error.rateLimited) {
         stoppedByRateLimit = true;
-        break;
+        stopAfterRepository = true;
       }
+    }
+    onProgress?.(index + 1, repositoryNames.length, repository);
+    if (stopAfterRepository) {
+      break;
     }
   }
   const rateLimit = stoppedByRateLimit ? null : await collectRateLimit(client);
@@ -149,40 +159,53 @@ async function collectRepository(
   client: GitHubApiClient,
   collectedAt: Date,
   coverageErrors: CoverageError[],
+  profile: CollectionProfile,
 ): Promise<RepositorySnapshot> {
   const path = repositoryPath(repository);
   const detail = await client.get<RepositoryResponse>(`/repos/${path}`);
-  const languages = await optionalRequest<Record<string, number>>(
-    client,
-    `/repos/${path}/languages`,
-    coverageErrors,
-  );
-  const readme = await optionalRequest<ReadmeResponse>(
-    client,
-    `/repos/${path}/readme`,
-    coverageErrors,
-    undefined,
-    true,
-  );
-  const commits = await optionalRequest<unknown[]>(
-    client,
-    `/repos/${path}/commits`,
-    coverageErrors,
-    {
-      sha: detail.data.default_branch,
-      since: new Date(
-        collectedAt.getTime() - 30 * 24 * 60 * 60 * 1_000,
-      ).toISOString(),
-      until: collectedAt.toISOString(),
-      per_page: 1,
-    },
-  );
-  const contributors = await optionalRequest<unknown[]>(
-    client,
-    `/repos/${path}/contributors`,
-    coverageErrors,
-    { per_page: 1, anon: 1 },
-  );
+  const readme =
+    profile === "screening"
+      ? null
+      : await optionalRequest<ReadmeResponse>(
+          client,
+          `/repos/${path}/readme`,
+          coverageErrors,
+          undefined,
+          true,
+        );
+  const languages =
+    profile === "full"
+      ? await optionalRequest<Record<string, number>>(
+          client,
+          `/repos/${path}/languages`,
+          coverageErrors,
+        )
+      : null;
+  const commits =
+    profile === "full"
+      ? await optionalRequest<unknown[]>(
+          client,
+          `/repos/${path}/commits`,
+          coverageErrors,
+          {
+            sha: detail.data.default_branch,
+            since: new Date(
+              collectedAt.getTime() - 30 * 24 * 60 * 60 * 1_000,
+            ).toISOString(),
+            until: collectedAt.toISOString(),
+            per_page: 1,
+          },
+        )
+      : null;
+  const contributors =
+    profile === "full"
+      ? await optionalRequest<unknown[]>(
+          client,
+          `/repos/${path}/contributors`,
+          coverageErrors,
+          { per_page: 1, anon: 1 },
+        )
+      : null;
 
   return {
     id: detail.data.id,

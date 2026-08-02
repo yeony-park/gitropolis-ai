@@ -138,13 +138,13 @@ const BROAD_KEYWORDS = new Set([
   "machine-learning",
 ]);
 
-const ALIASES: Readonly<Record<string, string>> = {
-  "agentic-rag": "agentic-rag",
-  "artificial-intelligence": "ai",
-  "graph-rag": "graph-rag",
-  graphrag: "graph-rag",
-  "retrieval-augmented-generation": "rag",
-};
+const ALIASES = new Map<string, string>([
+  ["agentic-rag", "agentic-rag"],
+  ["artificial-intelligence", "ai"],
+  ["graph-rag", "graph-rag"],
+  ["graphrag", "graph-rag"],
+  ["retrieval-augmented-generation", "rag"],
+]);
 
 interface ReadmeResponse {
   content?: unknown;
@@ -157,9 +157,34 @@ export interface RepositoryReadmeSource {
 }
 
 export interface TopicAnalysisOptions {
+  classifier?: AIRelevanceClassifier;
+  inputSchemaVersion?: "candidate-v1" | "activity-series-v1";
   maxReadmeCharacters?: number;
   observedAt?: Date;
 }
+
+export interface AIClassificationInput {
+  repositoryId: number;
+  fullName: string;
+  description: string | null;
+  topics: readonly string[];
+  readme: string | null;
+  observations: readonly KeywordObservation[];
+}
+
+export interface AIRelevanceClassifier {
+  readonly kind: "rules" | "model";
+  readonly version: string;
+  classify(input: AIClassificationInput): Promise<AIRelevanceAssessment>;
+}
+
+export const ruleBasedAIClassifier: AIRelevanceClassifier = {
+  kind: "rules",
+  version: "ai-relevance-rules-v1",
+  async classify(input): Promise<AIRelevanceAssessment> {
+    return assessAIRelevance(input.observations);
+  },
+};
 
 export function githubReadmeSource(
   client: GitHubApiClient,
@@ -201,6 +226,7 @@ export async function analyzeCandidates(
   options: TopicAnalysisOptions = {},
 ): Promise<TopicAnalysisSnapshot> {
   const observedAt = options.observedAt ?? new Date();
+  const classifier = options.classifier ?? ruleBasedAIClassifier;
   const maxReadmeCharacters =
     options.maxReadmeCharacters ?? DEFAULT_MAX_README_CHARACTERS;
   if (!Number.isInteger(maxReadmeCharacters) || maxReadmeCharacters < 1) {
@@ -280,21 +306,32 @@ export async function analyzeCandidates(
     repositories.push({
       repository_id: github.id,
       full_name: repository.full_name,
-      ai_relevance: assessAIRelevance(observations),
+      ai_relevance: await classifier.classify({
+        repositoryId: github.id,
+        fullName: repository.full_name,
+        description: github.description,
+        topics: github.topics,
+        readme,
+        observations,
+      }),
       community_status: null,
       observations,
     });
   }
 
   assignCommunityStatuses(repositories);
+  const keywordCensus = buildKeywordCensus(repositories);
 
   return {
     schema_version: "topic-analysis-v1",
     observed_at: observedAt.toISOString(),
     candidate_window: candidate.window,
-    methodology_version: "ai-relevance-rules-v1",
+    methodology_version: classifier.version,
     source: {
+      input_schema_version:
+        options.inputSchemaVersion ?? "candidate-v1",
       candidate_schema_version: candidate.schema_version,
+      classifier_kind: classifier.kind,
       candidate_coverage_complete: candidate.source.coverage_complete,
       candidate_coverage_errors: candidate.source.coverage_errors,
       github_authenticated: readmes.authenticated,
@@ -302,7 +339,65 @@ export async function analyzeCandidates(
         candidate.source.coverage_complete && coverageErrors.length === 0,
       coverage_errors: coverageErrors,
     },
+    keyword_census: keywordCensus,
     repositories,
+  };
+}
+
+function buildKeywordCensus(
+  repositories: readonly TopicAnalysisRepository[],
+): TopicAnalysisSnapshot["keyword_census"] {
+  const keywordRepositories = new Map<string, Set<number>>();
+  const keywordOccurrences = new Map<string, number>();
+  const keywordSources = new Map<string, Set<KeywordSource>>();
+  const classifierEvidence = new Set<string>();
+  let observationRecords = 0;
+
+  for (const repository of repositories) {
+    for (const evidence of repository.ai_relevance.evidence) {
+      classifierEvidence.add(evidence.keyword_id);
+    }
+    for (const observation of repository.observations) {
+      observationRecords += 1;
+      const repositoryIds =
+        keywordRepositories.get(observation.keyword_id) ?? new Set<number>();
+      repositoryIds.add(observation.repository_id);
+      keywordRepositories.set(observation.keyword_id, repositoryIds);
+      keywordOccurrences.set(
+        observation.keyword_id,
+        (keywordOccurrences.get(observation.keyword_id) ?? 0) +
+          observation.occurrence_count,
+      );
+      const sources =
+        keywordSources.get(observation.keyword_id) ?? new Set<KeywordSource>();
+      sources.add(observation.source);
+      keywordSources.set(observation.keyword_id, sources);
+    }
+  }
+
+  const keywords = [...keywordRepositories.entries()]
+    .map(([keywordId, repositoryIds]) => ({
+      keyword_id: keywordId,
+      repository_count: repositoryIds.size,
+      occurrence_count: keywordOccurrences.get(keywordId) ?? 0,
+      sources: [...(keywordSources.get(keywordId) ?? [])].sort(),
+    }))
+    .sort(
+      (left, right) =>
+        right.repository_count - left.repository_count ||
+        right.occurrence_count - left.occurrence_count ||
+        left.keyword_id.localeCompare(right.keyword_id),
+    );
+
+  return {
+    repositories_analyzed: repositories.length,
+    repositories_with_observations: repositories.filter(
+      ({ observations }) => observations.length > 0,
+    ).length,
+    observation_records: observationRecords,
+    unique_keywords: keywords.length,
+    unique_classifier_evidence_keywords: classifierEvidence.size,
+    keywords,
   };
 }
 
@@ -542,7 +637,7 @@ function normalizeKeyword(value: string): string {
     .replaceAll(/[^a-z0-9-]/g, "")
     .replaceAll(/-+/g, "-")
     .replaceAll(/^-|-$/g, "");
-  return ALIASES[normalized] ?? normalized;
+  return ALIASES.get(normalized) ?? normalized;
 }
 
 function observationKey(source: KeywordSource, keyword: string): string {

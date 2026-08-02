@@ -108,7 +108,10 @@ test("403 X-RateLimit-Reset is retried and succeeds", async () => {
             { message: "primary rate limit" },
             {
               status: 403,
-              headers: { "X-RateLimit-Reset": String(now / 1_000 + 3) },
+              headers: {
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": String(now / 1_000 + 3),
+              },
             },
           )
         : Response.json({ ok: true });
@@ -170,7 +173,10 @@ test("403 with a long reset delay stops without waiting", async () => {
         { message: "primary rate limit" },
         {
           status: 403,
-          headers: { "X-RateLimit-Reset": String(now / 1_000 + 3_600) },
+          headers: {
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": String(now / 1_000 + 3_600),
+          },
         },
       );
     },
@@ -214,4 +220,33 @@ test("403 without rate-limit headers is not retried", async () => {
   );
   assert.equal(requestCount, 1);
   assert.deepEqual(waits, []);
+});
+
+test("repository access blocked is not mistaken for a rate limit", async () => {
+  const now = 1_700_000_000_000;
+  const client = new GitHubClient({
+    now: () => now,
+    fetchImplementation: async () =>
+      Response.json(
+        { message: "Repository access blocked" },
+        {
+          status: 403,
+          headers: {
+            "X-RateLimit-Remaining": "3456",
+            "X-RateLimit-Reset": String(now / 1_000 + 3_600),
+          },
+        },
+      ),
+  });
+
+  await assert.rejects(
+    () => client.get("/repos/blocked/repository"),
+    (error: unknown) => {
+      assert.ok(error instanceof GitHubApiError);
+      assert.equal(error.status, 403);
+      assert.equal(error.rateLimited, false);
+      assert.equal(error.retryAfterMs, null);
+      return true;
+    },
+  );
 });

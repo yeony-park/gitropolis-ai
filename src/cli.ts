@@ -3,6 +3,16 @@
 import { dirname, resolve } from "node:path";
 
 import {
+  buildActivitySeries,
+  enrichActivitySeries,
+} from "./activity-series.js";
+import {
+  defaultActivitySeriesPath,
+  defaultEnrichedActivitySeriesPath,
+  readActivitySeries,
+  writeActivitySeries,
+} from "./activity-series-file.js";
+import {
   discoverCandidates,
   githubCollectorEnricher,
 } from "./candidate-discovery.js";
@@ -16,13 +26,17 @@ import { GHArchiveClient } from "./gh-archive/client.js";
 import { GitHubClient } from "./github/client.js";
 import { redactSecrets } from "./security/redact.js";
 import { defaultSnapshotPath, writeSnapshot } from "./snapshot-file.js";
+import type {
+  ActivityMetadataProfile,
+  ActivityMetadataSelectionRule,
+} from "./types/activity-series.js";
 import {
   analyzeCandidates,
   githubReadmeSource,
 } from "./topic-analysis.js";
 import {
   defaultTopicAnalysisPath,
-  readCandidateSnapshot,
+  readAnalysisInput,
   writeTopicAnalysisSnapshot,
 } from "./topic-analysis-file.js";
 
@@ -32,15 +46,21 @@ Commands:
   init      Initialize local Gitropolis project files
   collect   Collect public GitHub repository metadata
   discover  Discover fast-growing repositories from GH Archive
+  backfill  Build a complete daily GH Archive activity series
+  enrich-activity  Add current GitHub metadata using an activity floor
   analyze   Classify candidate AI relevance and observe keywords
 
 Options:
   --from ISO_TIME             UTC hour at which discovery starts
   --hours NUMBER              Number of hours to process (1-24, default: 24)
+  --days NUMBER               Complete UTC days to backfill (1-7, default: 7)
   --top NUMBER                Number of candidates to enrich (default: 10)
+  --min-daily-watch-events N  Daily activity floor for metadata (default: 5)
+  --min-window-watch-events N Full-window activity floor for scout metadata
+  --metadata-profile PROFILE  full, classification, or screening (default: full)
   --request-delay-ms NUMBER   Delay between hourly files (default: 1000)
   --request-timeout-ms NUMBER Timeout for each hourly file (default: 60000)
-  --input PATH                Read a candidate-v1 snapshot
+  --input PATH                Read a candidate or activity-series snapshot
   --max-readme-characters N   Maximum README prefix to analyze (default: 12000)
   --output PATH               Write output to a specific path
   -h, --help                  Show this help message
@@ -145,14 +165,91 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     return 0;
   }
 
+  if (command === "backfill") {
+    const options = parseBackfillArguments(commandArguments);
+    const archive = new GHArchiveClient({
+      requestTimeoutMs: options.requestTimeoutMs,
+    });
+    const snapshot = await buildActivitySeries(
+      {
+        from: options.from,
+        days: options.days,
+        requestDelayMs: options.requestDelayMs,
+        onDayComplete(day, completedDays, totalDays) {
+          process.stdout.write(
+            `GH Archive day ${completedDays}/${totalDays}: ${day.date}, ${day.hours_collected}/24 hours, ${day.watch_events_observed} WatchEvents\n`,
+          );
+        },
+      },
+      archive,
+    );
+    const outputPath =
+      options.output ??
+      defaultActivitySeriesPath(options.directory ?? process.cwd(), snapshot);
+    const writtenPath = await writeActivitySeries(snapshot, outputPath);
+
+    process.stdout.write(
+      `GH Archive hours: ${snapshot.source.hours_collected}/${snapshot.source.hours_requested}\n`,
+    );
+    process.stdout.write(
+      `Repositories observed: ${snapshot.source.repositories_seen}\n`,
+    );
+    process.stdout.write(
+      `Coverage errors: ${snapshot.source.coverage_errors.length}\n`,
+    );
+    process.stdout.write(`Activity series: ${writtenPath}\n`);
+    return 0;
+  }
+
+  if (command === "enrich-activity") {
+    const options = parseActivityEnrichmentArguments(commandArguments);
+    const input = await readActivitySeries(options.input);
+    const githubClient = new GitHubClient({ token: process.env.GITHUB_TOKEN });
+    const snapshot = await enrichActivitySeries(
+      input,
+      options.selection,
+      githubCollectorEnricher(githubClient, (processed, total) => {
+        if (processed % 10 === 0 || processed === total) {
+          process.stdout.write(
+            `GitHub metadata progress: ${processed}/${total}\n`,
+          );
+        }
+      }, options.metadataProfile),
+      new Date(),
+      options.metadataProfile,
+    );
+    const outputPath =
+      options.output ?? defaultEnrichedActivitySeriesPath(options.input);
+    const writtenPath = await writeActivitySeries(snapshot, outputPath);
+    const selection = snapshot.source.metadata_selection;
+    if (!selection) {
+      throw new Error("Activity metadata selection was not created.");
+    }
+
+    process.stdout.write(
+      `GitHub authentication: ${githubClient.authenticated ? "token" : "anonymous"}\n`,
+    );
+    process.stdout.write(
+      `Current metadata: ${selection.collected}/${selection.selected} collected with ${formatActivitySelection(selection)} (${selection.metadata_profile})\n`,
+    );
+    process.stdout.write(
+      `Coverage errors: ${snapshot.source.coverage_errors.length}\n`,
+    );
+    process.stdout.write(`Enriched activity series: ${writtenPath}\n`);
+    return 0;
+  }
+
   if (command === "analyze") {
     const options = parseAnalysisArguments(commandArguments);
-    const candidate = await readCandidateSnapshot(options.input);
+    const input = await readAnalysisInput(options.input);
     const githubClient = new GitHubClient({ token: process.env.GITHUB_TOKEN });
     const snapshot = await analyzeCandidates(
-      candidate,
+      input.candidate,
       githubReadmeSource(githubClient),
-      { maxReadmeCharacters: options.maxReadmeCharacters },
+      {
+        inputSchemaVersion: input.inputSchemaVersion,
+        maxReadmeCharacters: options.maxReadmeCharacters,
+      },
     );
     const outputPath =
       options.output ??
@@ -173,12 +270,187 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     process.stdout.write(
       `Analysis coverage errors: ${snapshot.source.coverage_errors.length}\n`,
     );
+    process.stdout.write(
+      `Keyword census: ${snapshot.keyword_census.unique_keywords} unique keywords, ${snapshot.keyword_census.observation_records} source observations across ${snapshot.keyword_census.repositories_with_observations}/${snapshot.keyword_census.repositories_analyzed} repositories\n`,
+    );
     process.stdout.write(`Topic analysis: ${writtenPath}\n`);
     return 0;
   }
 
   process.stderr.write(`Unknown command: ${command}\n\n${HELP}`);
   return 1;
+}
+
+export interface BackfillCliOptions {
+  directory?: string;
+  output?: string;
+  from: Date;
+  days: number;
+  requestDelayMs: number;
+  requestTimeoutMs: number;
+}
+
+export function parseBackfillArguments(
+  arguments_: readonly string[],
+): BackfillCliOptions {
+  const values: Record<string, string> = {};
+  const supported = new Set([
+    "--directory",
+    "--output",
+    "--from",
+    "--days",
+    "--request-delay-ms",
+    "--request-timeout-ms",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (!argument?.startsWith("--") || !supported.has(argument)) {
+      throw new Error(`Unknown backfill argument: ${argument ?? ""}`);
+    }
+    const value = arguments_[index + 1];
+    if (!value) {
+      throw new Error(`${argument} requires a value.`);
+    }
+    values[argument] = value;
+    index += 1;
+  }
+
+  const fromValue = values["--from"];
+  if (!fromValue) {
+    throw new Error("backfill requires --from.");
+  }
+  if (!fromValue.endsWith("Z")) {
+    throw new Error("--from must be an explicit UTC timestamp ending in Z.");
+  }
+  const from = new Date(fromValue);
+  if (
+    !Number.isFinite(from.getTime()) ||
+    from.getUTCHours() !== 0 ||
+    from.getUTCMinutes() !== 0 ||
+    from.getUTCSeconds() !== 0 ||
+    from.getUTCMilliseconds() !== 0
+  ) {
+    throw new Error("--from must be a valid UTC timestamp at 00:00:00Z.");
+  }
+
+  const days = integerOption(values["--days"], "--days", 7);
+  const requestDelayMs = integerOption(
+    values["--request-delay-ms"],
+    "--request-delay-ms",
+    1_000,
+  );
+  const requestTimeoutMs = integerOption(
+    values["--request-timeout-ms"],
+    "--request-timeout-ms",
+    60_000,
+  );
+  if (days < 1 || days > 7) {
+    throw new Error("--days must be between 1 and 7.");
+  }
+  if (requestDelayMs < 0 || requestDelayMs > 60_000) {
+    throw new Error("--request-delay-ms must be between 0 and 60000.");
+  }
+  if (requestTimeoutMs < 1_000 || requestTimeoutMs > 600_000) {
+    throw new Error(
+      "--request-timeout-ms must be between 1000 and 600000.",
+    );
+  }
+
+  return {
+    ...(values["--directory"]
+      ? { directory: values["--directory"] }
+      : {}),
+    ...(values["--output"] ? { output: values["--output"] } : {}),
+    from,
+    days,
+    requestDelayMs,
+    requestTimeoutMs,
+  };
+}
+
+export interface ActivityEnrichmentCliOptions {
+  input: string;
+  output?: string;
+  selection: ActivityMetadataSelectionRule;
+  metadataProfile: ActivityMetadataProfile;
+}
+
+export function parseActivityEnrichmentArguments(
+  arguments_: readonly string[],
+): ActivityEnrichmentCliOptions {
+  const values: Record<string, string> = {};
+  const supported = new Set([
+    "--input",
+    "--output",
+    "--min-daily-watch-events",
+    "--min-window-watch-events",
+    "--metadata-profile",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (!argument?.startsWith("--") || !supported.has(argument)) {
+      throw new Error(
+        `Unknown enrich-activity argument: ${argument ?? ""}`,
+      );
+    }
+    const value = arguments_[index + 1];
+    if (!value) {
+      throw new Error(`${argument} requires a value.`);
+    }
+    values[argument] = value;
+    index += 1;
+  }
+
+  const input = values["--input"];
+  if (!input) {
+    throw new Error("enrich-activity requires --input.");
+  }
+  if (
+    values["--min-daily-watch-events"] &&
+    values["--min-window-watch-events"]
+  ) {
+    throw new Error(
+      "Use only one of --min-daily-watch-events or --min-window-watch-events.",
+    );
+  }
+  const selection: ActivityMetadataSelectionRule = values[
+    "--min-window-watch-events"
+  ]
+    ? {
+        method: "minimum-window-watch-events",
+        minimum_window_watch_events: positiveIntegerOption(
+          values["--min-window-watch-events"],
+          "--min-window-watch-events",
+          3,
+        ),
+      }
+    : {
+        method: "minimum-daily-watch-events",
+        minimum_daily_watch_events: positiveIntegerOption(
+          values["--min-daily-watch-events"],
+          "--min-daily-watch-events",
+          5,
+        ),
+      };
+  const metadataProfileValue = values["--metadata-profile"] ?? "full";
+  if (
+    metadataProfileValue !== "full" &&
+    metadataProfileValue !== "classification" &&
+    metadataProfileValue !== "screening"
+  ) {
+    throw new Error(
+      "--metadata-profile must be full, classification, or screening.",
+    );
+  }
+
+  return {
+    input,
+    ...(values["--output"] ? { output: values["--output"] } : {}),
+    selection,
+    metadataProfile: metadataProfileValue,
+  };
 }
 
 export interface AnalysisCliOptions {
@@ -374,6 +646,27 @@ function integerOption(
     throw new Error(`${name} must be an integer.`);
   }
   return parsed;
+}
+
+function positiveIntegerOption(
+  value: string | undefined,
+  name: string,
+  defaultValue: number,
+): number {
+  const parsed = integerOption(value, name, defaultValue);
+  if (parsed < 1) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return parsed;
+}
+
+function formatActivitySelection(
+  selection: ActivityMetadataSelectionRule,
+): string {
+  if (selection.method === "minimum-window-watch-events") {
+    return `${selection.minimum_window_watch_events} WatchEvents in the window`;
+  }
+  return `${selection.minimum_daily_watch_events} WatchEvents in one day`;
 }
 
 export function formatCollectionSummary(
