@@ -38,6 +38,13 @@ export interface TopicAnalysisRepository {
   observations: KeywordObservation[];
 }
 
+export interface KeywordCensusEntry {
+  keyword_id: string;
+  repository_count: number;
+  occurrence_count: number;
+  sources: KeywordSource[];
+}
+
 export interface TopicAnalysisSnapshot {
   schema_version: "topic-analysis-v1";
   observed_at: string;
@@ -45,14 +52,24 @@ export interface TopicAnalysisSnapshot {
     from: string;
     to: string;
   };
-  methodology_version: "ai-relevance-rules-v1";
+  methodology_version: string;
   source: {
+    input_schema_version: "candidate-v1" | "activity-series-v1";
     candidate_schema_version: "candidate-v1";
+    classifier_kind: "rules" | "model";
     candidate_coverage_complete: boolean;
     candidate_coverage_errors: CandidateCoverageError[];
     github_authenticated: boolean;
     coverage_complete: boolean;
     coverage_errors: TopicAnalysisCoverageError[];
+  };
+  keyword_census: {
+    repositories_analyzed: number;
+    repositories_with_observations: number;
+    observation_records: number;
+    unique_keywords: number;
+    unique_classifier_evidence_keywords: number;
+    keywords: KeywordCensusEntry[];
   };
   repositories: TopicAnalysisRepository[];
 }

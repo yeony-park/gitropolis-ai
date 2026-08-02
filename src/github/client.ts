@@ -117,13 +117,18 @@ export class GitHubClient implements GitHubApiClient {
         };
       }
 
-      const retryAfterMs = rateLimitDelay(response.headers, this.now());
-      const rateLimited =
-        response.status === 429 ||
-        (response.status === 403 && retryAfterMs !== null);
+      const message = await readErrorMessage(response);
+      const rateLimited = isRateLimited(
+        response.status,
+        response.headers,
+        message,
+      );
+      const retryAfterMs = rateLimited
+        ? rateLimitDelay(response.headers, this.now())
+        : null;
       const error = new GitHubApiError(
         response.status,
-        redactSecrets(await readErrorMessage(response), [this.token]),
+        redactSecrets(message, [this.token]),
         { endpoint: path, rateLimited, retryAfterMs },
       );
 
@@ -139,6 +144,24 @@ export class GitHubClient implements GitHubApiClient {
       await this.sleep(retryAfterMs);
     }
   }
+}
+
+function isRateLimited(
+  status: number,
+  headers: Headers,
+  message: string,
+): boolean {
+  if (status === 429) {
+    return true;
+  }
+  if (status !== 403) {
+    return false;
+  }
+  return (
+    headers.has("retry-after") ||
+    headers.get("x-ratelimit-remaining") === "0" ||
+    /(?:secondary |primary )?rate limit|abuse detection/i.test(message)
+  );
 }
 
 function rateLimitDelay(headers: Headers, now: number): number | null {
