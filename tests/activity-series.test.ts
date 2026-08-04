@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -23,6 +23,7 @@ import type {
   GHArchiveRecord,
   GHArchiveSource,
 } from "../src/gh-archive/client.js";
+import { parseWatchEvent } from "../src/gh-archive/watch-event.js";
 import type {
   RepositorySnapshot,
   Snapshot,
@@ -48,13 +49,16 @@ class StubArchive implements GHArchiveSource {
 
 const from = new Date("2026-07-27T00:00:00Z");
 const collectedAt = new Date("2026-08-03T00:00:00Z");
+let nextWatchEventId = 1;
 
 function eventRecord(
   fullName: string,
   createdAt: string,
   line = 1,
+  eventId = String(nextWatchEventId++),
 ): GHArchiveRecord {
   const event: GHArchiveEvent = {
+    id: eventId,
     type: "WatchEvent",
     repo: { name: fullName },
     payload: { action: "started" },
@@ -254,6 +258,331 @@ test("incomplete hours mark daily values as partial and disable velocity", async
     null,
   );
   assert.equal(snapshot.source.coverage_errors.length, 2);
+  assert.equal(snapshot.source.event_integrity?.malformed_records, 1);
+});
+
+test("deduplicates WatchEvent ids across hours and preserves count invariants", async () => {
+  const archive = new StubArchive({
+    "2026-07-27T00:00:00.000Z": [
+      eventRecord("owner/alpha", "2026-07-27T00:05:00Z", 1, "9001"),
+      eventRecord("owner/alpha", "2026-07-27T00:06:00Z", 2, "9001"),
+      eventRecord("owner/alpha", "2026-07-27T00:07:00Z", 3, "9002"),
+    ],
+    "2026-07-27T01:00:00.000Z": [
+      eventRecord("OWNER/CHANGED", "2026-07-27T00:05:00Z", 1, "9001"),
+      eventRecord("owner/beta", "2026-07-27T01:10:00Z", 2, "9003"),
+    ],
+  });
+
+  const snapshot = await buildActivitySeries({
+    from,
+    days: 1,
+    requestDelayMs: 0,
+  }, archive);
+  const integrity = snapshot.source.event_integrity;
+
+  assert.equal(snapshot.source.archive_coverage_complete, true);
+  assert.equal(snapshot.source.watch_events_observed, 3);
+  assert.equal(snapshot.source.repositories_seen, 2);
+  assert.deepEqual(integrity, {
+    deduplication_applied: true,
+    raw_watch_events_seen: 5,
+    unique_watch_events: 3,
+    duplicate_event_ids: 2,
+    missing_event_ids: 0,
+    invalid_event_ids: 0,
+    invalid_watch_events: 0,
+    malformed_records: 0,
+  });
+  assert.equal(snapshot.days[0]?.watch_events_observed, 3);
+  assert.equal(snapshot.days[0]?.event_integrity?.duplicate_event_ids, 2);
+  assert.equal(
+    snapshot.repositories.reduce(
+      (total, repository) =>
+        total + repository.watch_events_observed_total,
+      0,
+    ),
+    integrity?.unique_watch_events,
+  );
+  assert.equal(snapshot.repositories[0]?.full_name, "owner/alpha");
+  assert.equal(snapshot.repositories[0]?.watch_events_observed_total, 2);
+  assert.equal(snapshot.repositories[0]?.first_seen_at, "2026-07-27T00:05:00Z");
+  assert.equal(snapshot.repositories[0]?.last_seen_at, "2026-07-27T00:07:00Z");
+});
+
+test("reports invalid identities while allowing a later valid record", async () => {
+  const invalidBeforeValid: GHArchiveEvent = {
+    id: "9100",
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "stopped" },
+    created_at: "2026-07-27T00:01:00Z",
+  };
+  const missingId: GHArchiveEvent = {
+    type: "WatchEvent",
+    repo: { name: "owner/missing" },
+    payload: { action: "started" },
+    created_at: "2026-07-27T00:02:00Z",
+  };
+  const invalidId: GHArchiveEvent = {
+    id: 9_101,
+    type: "WatchEvent",
+    repo: { name: "owner/invalid" },
+    payload: { action: "started" },
+    created_at: "2026-07-27T00:03:00Z",
+  };
+  const archive = new StubArchive({
+    "2026-07-27T00:00:00.000Z": [
+      { kind: "event", line: 1, event: invalidBeforeValid },
+      { kind: "event", line: 2, event: missingId },
+      { kind: "event", line: 3, event: invalidId },
+      eventRecord(
+        "owner/repository",
+        "2026-07-27T00:04:00Z",
+        4,
+        "9100",
+      ),
+      eventRecord(
+        "owner/repository",
+        "2026-07-27T00:05:00Z",
+        5,
+        "9100",
+      ),
+      eventRecord(
+        "owner/large-id",
+        "2026-07-27T00:06:00Z",
+        6,
+        "999999999999999999999999999999",
+      ),
+      { kind: "parse-error", line: 7, message: "invalid JSON" },
+      {
+        kind: "event",
+        line: 8,
+        event: { type: "PushEvent" },
+      },
+    ],
+  });
+
+  const snapshot = await buildActivitySeries({
+    from,
+    days: 1,
+    requestDelayMs: 0,
+  }, archive);
+
+  assert.equal(snapshot.source.watch_events_observed, 2);
+  assert.equal(snapshot.source.repositories_seen, 2);
+  assert.equal(snapshot.source.archive_coverage_complete, false);
+  assert.equal(snapshot.source.coverage_errors.length, 4);
+  assert.deepEqual(snapshot.source.event_integrity, {
+    deduplication_applied: true,
+    raw_watch_events_seen: 6,
+    unique_watch_events: 2,
+    duplicate_event_ids: 1,
+    missing_event_ids: 1,
+    invalid_event_ids: 1,
+    invalid_watch_events: 3,
+    malformed_records: 1,
+  });
+});
+
+test("validates the complete WatchEvent id format without numeric conversion", () => {
+  const hour = new Date("2026-07-27T00:00:00Z");
+  const base: GHArchiveEvent = {
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "started" },
+    created_at: "2026-07-27T00:05:00Z",
+  };
+
+  for (const id of [undefined, null]) {
+    const parsed = parseWatchEvent({ ...base, id }, hour);
+    assert.equal(parsed.kind, "invalid");
+    assert.equal(
+      parsed.kind === "invalid" ? parsed.reason : null,
+      "missing-event-id",
+    );
+  }
+  for (const id of ["", " ", 1, "-1", "1.5", "1e3", {}, []]) {
+    const parsed = parseWatchEvent({ ...base, id }, hour);
+    assert.equal(parsed.kind, "invalid");
+    assert.equal(
+      parsed.kind === "invalid" ? parsed.reason : null,
+      "invalid-event-id",
+    );
+  }
+
+  const largeId = "999999999999999999999999999999999999";
+  const parsed = parseWatchEvent({ ...base, id: largeId }, hour);
+  assert.equal(parsed.kind, "watch");
+  assert.equal(parsed.kind === "watch" ? parsed.eventId : null, largeId);
+});
+
+test("preserves deduplication across a partial stream failure", async () => {
+  const archive: GHArchiveSource = {
+    async *recordsForHour(hour): AsyncIterable<GHArchiveRecord> {
+      if (hour.toISOString() === "2026-07-27T00:00:00.000Z") {
+        yield eventRecord(
+          "owner/first",
+          "2026-07-27T00:05:00Z",
+          1,
+          "9300",
+        );
+        throw new Error("stream interrupted");
+      }
+      if (hour.toISOString() === "2026-07-27T01:00:00.000Z") {
+        yield eventRecord(
+          "owner/changed",
+          "2026-07-27T00:05:00Z",
+          1,
+          "9300",
+        );
+        yield eventRecord(
+          "owner/second",
+          "2026-07-27T01:05:00Z",
+          2,
+          "9301",
+        );
+      }
+    },
+  };
+
+  const snapshot = await buildActivitySeries(
+    { from, days: 1, requestDelayMs: 0 },
+    archive,
+  );
+
+  assert.equal(snapshot.source.hours_collected, 23);
+  assert.equal(snapshot.source.archive_coverage_complete, false);
+  assert.equal(snapshot.source.watch_events_observed, 2);
+  assert.equal(snapshot.source.event_integrity?.duplicate_event_ids, 1);
+  assert.equal(snapshot.source.event_integrity?.unique_watch_events, 2);
+  assert.equal(
+    snapshot.repositories.reduce(
+      (total, repository) =>
+        total + repository.watch_events_observed_total,
+      0,
+    ),
+    2,
+  );
+  assert.equal(
+    snapshot.repositories.every(
+      ({ observed_watch_velocity_per_day: velocity }) => velocity === null,
+    ),
+    true,
+  );
+});
+
+test("duplicate ids cannot inflate metadata selection thresholds", async () => {
+  const duplicateRecords = Array.from({ length: 5 }, (_, index) =>
+    eventRecord(
+      "owner/repository",
+      `2026-07-27T00:0${index}:00Z`,
+      index + 1,
+      "9200",
+    ),
+  );
+  const raw = await buildActivitySeries(
+    { from, days: 1, requestDelayMs: 0 },
+    new StubArchive({
+      "2026-07-27T00:00:00.000Z": duplicateRecords,
+    }),
+  );
+  let selected: readonly string[] = [];
+  const enriched = await enrichActivitySeries(
+    raw,
+    {
+      method: "minimum-daily-watch-events",
+      minimum_daily_watch_events: 5,
+    },
+    async (names) => {
+      selected = names;
+      return enrichmentSnapshot(names);
+    },
+    collectedAt,
+  );
+
+  assert.deepEqual(selected, []);
+  assert.equal(enriched.source.metadata_selection?.selected, 0);
+  assert.equal(enriched.repositories[0]?.watch_events_observed_total, 1);
+});
+
+test("cross-day duplicates cannot inflate the Scout window threshold", async () => {
+  const raw = await buildActivitySeries(
+    { from, days: 3, requestDelayMs: 0 },
+    new StubArchive({
+      "2026-07-27T00:00:00.000Z": [
+        eventRecord(
+          "owner/repository",
+          "2026-07-27T00:05:00Z",
+          1,
+          "9400",
+        ),
+      ],
+      "2026-07-28T00:00:00.000Z": [
+        eventRecord(
+          "owner/repository",
+          "2026-07-28T00:05:00Z",
+          1,
+          "9400",
+        ),
+      ],
+      "2026-07-29T00:00:00.000Z": [
+        eventRecord(
+          "owner/repository",
+          "2026-07-29T00:05:00Z",
+          1,
+          "9400",
+        ),
+      ],
+    }),
+  );
+  let selected: readonly string[] = [];
+  const enriched = await enrichActivitySeries(
+    raw,
+    {
+      method: "minimum-window-watch-events",
+      minimum_window_watch_events: 3,
+    },
+    async (names) => {
+      selected = names;
+      return enrichmentSnapshot(names);
+    },
+    collectedAt,
+  );
+
+  assert.deepEqual(selected, []);
+  assert.equal(enriched.source.metadata_selection?.selected, 0);
+  assert.equal(enriched.source.event_integrity?.duplicate_event_ids, 2);
+});
+
+test("legacy activity-series-v1 without integrity fields remains readable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gitropolis-legacy-"));
+  const snapshot = await buildActivitySeries(
+    { from, days: 1, requestDelayMs: 0 },
+    new StubArchive({}),
+  );
+  const legacy = structuredClone(snapshot);
+  delete legacy.source.event_integrity;
+  for (const day of legacy.days) {
+    delete day.event_integrity;
+  }
+  const path = join(directory, "legacy.json");
+  await writeFile(path, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+
+  const read = await readActivitySeries(path);
+  const enriched = await enrichActivitySeries(
+    read,
+    {
+      method: "minimum-daily-watch-events",
+      minimum_daily_watch_events: 1,
+    },
+    async (names) => enrichmentSnapshot(names),
+    collectedAt,
+  );
+
+  assert.equal(read.source.event_integrity, undefined);
+  assert.equal(enriched.source.event_integrity, undefined);
+  assert.equal(activitySeriesToCandidate(enriched).source.event_integrity, undefined);
 });
 
 test("window scout selects activity spread across different days", async () => {

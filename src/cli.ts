@@ -161,6 +161,7 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     process.stdout.write(
       `Candidates: ${snapshot.repositories.length}; enriched: ${enrichedCount}\n`,
     );
+    writeEventIntegritySummary(snapshot.source.event_integrity);
     process.stdout.write(`Candidate snapshot: ${writtenPath}\n`);
     return 0;
   }
@@ -194,6 +195,7 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     process.stdout.write(
       `Repositories observed: ${snapshot.source.repositories_seen}\n`,
     );
+    writeEventIntegritySummary(snapshot.source.event_integrity);
     process.stdout.write(
       `Coverage errors: ${snapshot.source.coverage_errors.length}\n`,
     );
@@ -667,6 +669,26 @@ function formatActivitySelection(
     return `${selection.minimum_window_watch_events} WatchEvents in the window`;
   }
   return `${selection.minimum_daily_watch_events} WatchEvents in one day`;
+}
+
+function writeEventIntegritySummary(
+  integrity:
+    | {
+        raw_watch_events_seen: number;
+        unique_watch_events: number;
+        duplicate_event_ids: number;
+        missing_event_ids: number;
+        invalid_event_ids: number;
+        malformed_records: number;
+      }
+    | undefined,
+): void {
+  if (!integrity) {
+    return;
+  }
+  process.stdout.write(
+    `Event integrity: ${integrity.unique_watch_events}/${integrity.raw_watch_events_seen} unique, ${integrity.duplicate_event_ids} duplicates, ${integrity.missing_event_ids} missing IDs, ${integrity.invalid_event_ids} invalid IDs, ${integrity.malformed_records} malformed records\n`,
+  );
 }
 
 export function formatCollectionSummary(

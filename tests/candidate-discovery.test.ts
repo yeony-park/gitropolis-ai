@@ -45,13 +45,16 @@ class StubArchive implements GHArchiveSource {
 
 const from = new Date("2026-07-30T00:00:00Z");
 const collectedAt = new Date("2026-08-02T00:00:00Z");
+let nextWatchEventId = 100_000;
 
 function watchEvent(
   fullName: string,
   createdAt: string,
   action = "started",
+  eventId = String(nextWatchEventId++),
 ): GHArchiveEvent {
   return {
+    id: eventId,
     type: "WatchEvent",
     repo: { name: fullName },
     payload: { action },
@@ -253,6 +256,7 @@ test("discovery reports malformed and out-of-window WatchEvents", async () => {
       watchEvent("owner/after", "2026-07-30T01:00:00Z"),
       watchEvent("owner/stopped", "2026-07-30T00:20:00Z", "stopped"),
       {
+        id: String(nextWatchEventId++),
         type: "WatchEvent",
         repo: { name: "owner/missing-time" },
         payload: { action: "started" },
@@ -281,6 +285,53 @@ test("discovery reports malformed and out-of-window WatchEvents", async () => {
     ).length,
     2,
   );
+});
+
+test("candidate discovery ranks repositories after cross-hour deduplication", async () => {
+  const archive = new StubArchive({
+    "2026-07-30T00:00:00.000Z": [
+      watchEvent("owner/alpha", "2026-07-30T00:05:00Z", "started", "7001"),
+      watchEvent("owner/alpha", "2026-07-30T00:06:00Z", "started", "7001"),
+      watchEvent("owner/beta", "2026-07-30T00:07:00Z", "started", "7002"),
+    ],
+    "2026-07-30T01:00:00.000Z": [
+      watchEvent("owner/changed", "2026-07-30T00:05:00Z", "started", "7001"),
+      watchEvent("owner/beta", "2026-07-30T01:08:00Z", "started", "7003"),
+    ],
+  });
+  let enrichedNames: readonly string[] = [];
+
+  const snapshot = await discoverCandidates(
+    { from, hours: 2, top: 2, requestDelayMs: 0, collectedAt },
+    archive,
+    async (names) => {
+      enrichedNames = names;
+      return enrichmentSnapshot(names);
+    },
+  );
+
+  assert.deepEqual(enrichedNames, ["owner/beta", "owner/alpha"]);
+  assert.deepEqual(
+    snapshot.repositories.map(({ full_name: name, watch_events: count }) => ({
+      name,
+      count,
+    })),
+    [
+      { name: "owner/beta", count: 2 },
+      { name: "owner/alpha", count: 1 },
+    ],
+  );
+  assert.deepEqual(snapshot.source.event_integrity, {
+    deduplication_applied: true,
+    raw_watch_events_seen: 5,
+    unique_watch_events: 3,
+    duplicate_event_ids: 2,
+    missing_event_ids: 0,
+    invalid_event_ids: 0,
+    invalid_watch_events: 0,
+    malformed_records: 0,
+  });
+  assert.equal(snapshot.source.coverage_complete, true);
 });
 
 test("discovery ranks tied candidates by repository name", async () => {

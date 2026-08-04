@@ -2,6 +2,7 @@ import type {
   RateLimitResource,
   RepositorySnapshot,
 } from "./snapshot.js";
+import type { GHArchiveEventIntegrity } from "./gh-archive.js";
 
 export interface ActivitySeriesCoverageError {
   source: "gh-archive" | "github";
@@ -16,6 +17,7 @@ export interface ActivitySeriesDay {
   hours_collected: number;
   coverage_complete: boolean;
   watch_events_observed: number;
+  event_integrity?: GHArchiveEventIntegrity;
 }
 
 export interface RepositoryDailyActivity {
@@ -66,6 +68,7 @@ export interface ActivitySeriesSnapshot {
     hours_collected: number;
     watch_events_observed: number;
     repositories_seen: number;
+    event_integrity?: GHArchiveEventIntegrity;
     github_authenticated: boolean | null;
     github_rate_limit: Partial<
       Record<"core" | "search" | "graphql", RateLimitResource>
