@@ -1,7 +1,7 @@
 # Gitropolis Data Specification
 
 > Status: Early public contract
-> Last updated: 2026-08-03
+> Last updated: 2026-08-05
 > GitHub REST API version: `2026-03-10`
 
 This document contains data behavior that has been implemented or verified well
@@ -106,8 +106,11 @@ sequentially with a default one-second interval and a 60-second timeout per
 file.
 
 Discovery does not use repository names, topics, README text, or other keywords.
-It counts valid `WatchEvent` records by case-insensitive repository name and
-retains the first and last event timestamps observed in the requested window.
+It validates each `WatchEvent` event ID as a positive decimal string, removes
+repeated IDs across the full discovery window, and counts the remaining valid
+records by case-insensitive repository name. Event IDs stay as strings during
+validation and are not converted to JavaScript numbers. Discovery retains the
+first and last event timestamps observed in the requested window.
 Candidates are ranked by descending event count, then by repository name for a
 deterministic tie break. The default top 10 candidates are enriched by the
 existing GitHub REST collector.
@@ -132,6 +135,8 @@ Each candidate snapshot contains:
 - `source.type` set to `gh-archive`;
 - requested and successfully processed hour counts;
 - total valid WatchEvents and distinct repositories observed;
+- additive event-integrity counters when the snapshot was created by a
+  deduplication-aware collector;
 - GitHub authentication and rate-limit metadata when enrichment runs;
 - archive, parsing, and GitHub enrichment coverage errors;
 - repositories with `full_name`, `watch_events`, `first_seen_at`, and
@@ -173,6 +178,8 @@ Each activity-series snapshot contains:
 - requested and collected hour counts, observed WatchEvents, and distinct
   repositories;
 - per-day hour coverage and WatchEvent totals;
+- source-level and per-day event-integrity counters in newly generated
+  snapshots;
 - every observed repository's window total, first and last observation time,
   and daily counts;
 - `observed_watch_velocity_per_day` only when archive coverage is complete,
@@ -185,10 +192,55 @@ An end-to-end run requested 168 hours from 2026-07-27 through 2026-08-02. At
 the time of the run, the last eight UTC hours of 2026-08-02 had not yet been
 published by GH Archive, so 160 hours were available. The partial snapshot
 retained 7,000 valid WatchEvents across 5,274 repositories and correctly left
-velocity values as `null`. The then-current daily floor of three selected 104 repositories;
-current GitHub metadata was collected for 100, with failures retained as
-coverage errors. These sample counts demonstrate behavior, not a stable product
-benchmark.
+velocity values as `null`. The then-current daily floor of three selected 104
+repositories; current GitHub metadata was collected for 100, with failures
+retained as coverage errors. These sample counts demonstrate behavior, not a
+stable product benchmark.
+
+## GH Archive event integrity
+
+New `candidate-v1` and `activity-series-v1` outputs include an additive
+`event_integrity` object. Older v1 snapshots without this object remain valid
+inputs. The object contains:
+
+| Field | Meaning |
+|---|---|
+| `deduplication_applied` | Whether stable event-ID deduplication was applied |
+| `raw_watch_events_seen` | All JSON `WatchEvent` records encountered before identity and semantic rejection |
+| `unique_watch_events` | Valid events accepted after deduplication |
+| `duplicate_event_ids` | Records skipped because an accepted event ID was already seen in the command window |
+| `missing_event_ids` | `WatchEvent` records without an ID |
+| `invalid_event_ids` | IDs that are not positive decimal strings |
+| `invalid_watch_events` | All `WatchEvent` records rejected by identity or semantic validation |
+| `malformed_records` | Archive lines that could not be parsed as JSON objects |
+
+Only an event that passes ID, action, repository-name, timestamp, and hourly
+window validation is registered in the accepted-ID set. This allows a valid
+record to be counted when an invalid record with the same ID appeared earlier.
+Once an event is accepted, any later occurrence of that ID is classified as a
+duplicate before other semantic checks, including when it appears in another
+hourly file.
+
+A duplicate does not make coverage incomplete because it is removed
+deterministically. Missing or invalid IDs, malformed records, semantically
+invalid WatchEvents, failed hourly files, and partial streams remain coverage
+errors. Accepted WatchEvent totals in the source, daily buckets, repository
+records, and `event_integrity.unique_watch_events` describe the same
+deduplicated population.
+
+An integrity verification reran 2026-07-01 through 2026-07-07 and reproduced
+the earlier 45,547 WatchEvents and 24,995 repositories exactly. It found zero
+duplicate, missing, or invalid event IDs and 119 malformed archive lines.
+A supporting 2026-06-24 through 2026-06-30 run likewise found 58,267 unique
+WatchEvents, zero identity anomalies, and 227 malformed lines. These results
+show that event-ID duplication did not explain the observed daily spikes in
+those windows; they are experimental observations, not a guarantee for future
+GH Archive files.
+
+A 2026-08-01 through 2026-08-04 update collected 87 of the requested 96 hours
+because the final nine August 4 UTC files were not yet published. The partial
+snapshot retained 3,108 unique WatchEvents, zero identity anomalies, and 43
+malformed lines without representing the four-day window as complete.
 
 ## AI relevance and keyword observation
 
@@ -318,6 +370,8 @@ An API failure must never be stored as a numeric zero.
 - Partial endpoint failures are recorded as incomplete coverage.
 - Missing or malformed GH Archive records are never counted as valid events and
   are exposed through candidate coverage errors.
+- Repeated accepted GH Archive event IDs are counted once and reported through
+  `event_integrity`; handled duplicates do not make coverage incomplete.
 - A repository-detail failure does not discard successful repository records
   or prevent later repositories from being attempted.
 - A `404` may indicate a rename, transfer, deletion, or visibility change and
