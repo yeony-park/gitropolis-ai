@@ -243,6 +243,22 @@ the `full` profile additionally collects language, commit, and contributor
 activity. Interrupted enrichment can resume from its previous output without
 requesting successful repositories again.
 
+Derive deterministic Main Radar, Emerging Scout, fast-breakout, and repository
+lifecycle state from consecutive activity-series files:
+
+```bash
+node dist/cli.js lifecycle \
+  --input .gitropolis/activity/WEEK_1.json \
+  --input .gitropolis/activity/WEEK_2.json
+```
+
+The command groups consecutive daily observations into Monday-based UTC weeks.
+It keeps Main and Scout membership separate from
+`candidate → active → cooling → inactive`, records revival as an event, and
+freezes unsafe state changes when calendar or hourly coverage is incomplete.
+Record-level warnings remain visible and block negative transitions while
+still allowing an observed threshold crossing to enter the Radar.
+
 Both long-running commands print progress while preserving partial coverage and
 successful repository results.
 
