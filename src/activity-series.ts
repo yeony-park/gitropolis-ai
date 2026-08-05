@@ -1,5 +1,12 @@
 import type { GHArchiveSource } from "./gh-archive/client.js";
-import { parseWatchEvent } from "./gh-archive/watch-event.js";
+import {
+  createEventIntegrityAccumulator,
+  eventIntegritySnapshot,
+  inspectWatchEvent,
+  recordInspection,
+  recordMalformedRecord,
+  type EventIntegrityAccumulator,
+} from "./gh-archive/event-integrity.js";
 import type {
   ActivitySeriesCoverageError,
   ActivitySeriesDay,
@@ -28,6 +35,7 @@ interface DayAccumulator {
   hoursCollected: number;
   watchEvents: number;
   errorCount: number;
+  integrity: EventIntegrityAccumulator;
 }
 
 export interface ActivitySeriesOptions {
@@ -54,6 +62,8 @@ export async function buildActivitySeries(
   const coverageErrors: ActivitySeriesCoverageError[] = [];
   const days = createDayAccumulators(from, options.days);
   const hoursRequested = options.days * 24;
+  const acceptedEventIds = new Set<string>();
+  const integrity = createEventIntegrityAccumulator();
 
   for (let offset = 0; offset < hoursRequested; offset += 1) {
     const hour = new Date(from.getTime() + offset * HOUR_MS);
@@ -65,6 +75,8 @@ export async function buildActivitySeries(
     try {
       for await (const record of archive.recordsForHour(hour)) {
         if (record.kind === "parse-error") {
+          recordMalformedRecord(integrity);
+          recordMalformedRecord(day.integrity);
           recordArchiveError(
             coverageErrors,
             day,
@@ -73,20 +85,29 @@ export async function buildActivitySeries(
           );
           continue;
         }
-        const parsed = parseWatchEvent(record.event, hour);
-        if (parsed.kind === "invalid") {
+        const inspected = inspectWatchEvent(
+          record.event,
+          hour,
+          acceptedEventIds,
+        );
+        recordInspection(integrity, inspected);
+        recordInspection(day.integrity, inspected);
+        if (inspected.kind === "invalid") {
           recordArchiveError(
             coverageErrors,
             day,
             `${hour.toISOString()}#line-${record.line}`,
-            parsed.message,
+            inspected.message,
           );
           continue;
         }
-        if (parsed.kind === "ignored") {
+        if (
+          inspected.kind === "ignored" ||
+          inspected.kind === "duplicate"
+        ) {
           continue;
         }
-        recordActivity(repositories, parsed, dayIndex, options.days);
+        recordActivity(repositories, inspected, dayIndex, options.days);
         day.watchEvents += 1;
       }
       day.hoursCollected += 1;
@@ -165,6 +186,7 @@ export async function buildActivitySeries(
         0,
       ),
       repositories_seen: repositories.size,
+      event_integrity: eventIntegritySnapshot(integrity),
       github_authenticated: null,
       github_rate_limit: null,
       metadata_selection: null,
@@ -327,6 +349,9 @@ export function activitySeriesToCandidate(
       hours_collected: snapshot.source.hours_collected,
       watch_events_seen: snapshot.source.watch_events_observed,
       repositories_seen: snapshot.source.repositories_seen,
+      ...(snapshot.source.event_integrity
+        ? { event_integrity: snapshot.source.event_integrity }
+        : {}),
       github_authenticated: snapshot.source.github_authenticated,
       github_rate_limit: snapshot.source.github_rate_limit,
       coverage_errors: snapshot.source.coverage_errors,
@@ -354,6 +379,7 @@ function createDayAccumulators(
     hoursCollected: 0,
     watchEvents: 0,
     errorCount: 0,
+    integrity: createEventIntegrityAccumulator(),
   }));
 }
 
@@ -364,6 +390,7 @@ function daySnapshot(days: readonly DayAccumulator[]): ActivitySeriesDay[] {
     hours_collected: day.hoursCollected,
     coverage_complete: day.hoursCollected === 24 && day.errorCount === 0,
     watch_events_observed: day.watchEvents,
+    event_integrity: eventIntegritySnapshot(day.integrity),
   }));
 }
 

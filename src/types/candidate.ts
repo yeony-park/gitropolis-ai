@@ -2,6 +2,7 @@ import type {
   RateLimitResource,
   RepositorySnapshot,
 } from "./snapshot.js";
+import type { GHArchiveEventIntegrity } from "./gh-archive.js";
 
 export interface CandidateCoverageError {
   source: "gh-archive" | "github";
@@ -31,6 +32,7 @@ export interface CandidateSnapshot {
     hours_collected: number;
     watch_events_seen: number;
     repositories_seen: number;
+    event_integrity?: GHArchiveEventIntegrity;
     github_authenticated: boolean | null;
     github_rate_limit: Partial<
       Record<"core" | "search" | "graphql", RateLimitResource>

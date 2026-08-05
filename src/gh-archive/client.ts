@@ -7,6 +7,7 @@ export const GH_ARCHIVE_DATA_URL = "https://data.gharchive.org";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export interface GHArchiveEvent {
+  id?: unknown;
   type?: unknown;
   repo?: {
     name?: unknown;

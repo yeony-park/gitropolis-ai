@@ -2,11 +2,14 @@ import {
   collectSnapshot,
   type CollectionProfile,
 } from "./collector.js";
-import type {
-  GHArchiveEvent,
-  GHArchiveSource,
-} from "./gh-archive/client.js";
-import { parseWatchEvent } from "./gh-archive/watch-event.js";
+import type { GHArchiveSource } from "./gh-archive/client.js";
+import {
+  createEventIntegrityAccumulator,
+  eventIntegritySnapshot,
+  inspectWatchEvent,
+  recordInspection,
+  recordMalformedRecord,
+} from "./gh-archive/event-integrity.js";
 import type { GitHubApiClient } from "./github/client.js";
 import type {
   CandidateCoverageError,
@@ -51,12 +54,15 @@ export async function discoverCandidates(
   const accumulators = new Map<string, CandidateAccumulator>();
   const coverageErrors: CandidateCoverageError[] = [];
   let hoursCollected = 0;
+  const acceptedEventIds = new Set<string>();
+  const integrity = createEventIntegrityAccumulator();
 
   for (let offset = 0; offset < options.hours; offset += 1) {
     const hour = new Date(from.getTime() + offset * HOUR_MS);
     try {
       for await (const record of archive.recordsForHour(hour)) {
         if (record.kind === "parse-error") {
+          recordMalformedRecord(integrity);
           coverageErrors.push({
             source: "gh-archive",
             target: `${hour.toISOString()}#line-${record.line}`,
@@ -65,19 +71,28 @@ export async function discoverCandidates(
           });
           continue;
         }
-        const validationError = recordWatchEvent(
-          accumulators,
+        const inspected = inspectWatchEvent(
           record.event,
           hour,
+          acceptedEventIds,
         );
-        if (validationError) {
+        recordInspection(integrity, inspected);
+        if (inspected.kind === "invalid") {
           coverageErrors.push({
             source: "gh-archive",
             target: `${hour.toISOString()}#line-${record.line}`,
             status: null,
-            message: validationError,
+            message: inspected.message,
           });
+          continue;
         }
+        if (
+          inspected.kind === "ignored" ||
+          inspected.kind === "duplicate"
+        ) {
+          continue;
+        }
+        recordWatchEvent(accumulators, inspected);
       }
       hoursCollected += 1;
     } catch (error) {
@@ -159,6 +174,7 @@ export async function discoverCandidates(
         0,
       ),
       repositories_seen: accumulators.size,
+      event_integrity: eventIntegritySnapshot(integrity),
       github_authenticated: githubSnapshot?.source.authenticated ?? null,
       github_rate_limit: githubSnapshot?.source.rate_limit ?? null,
       coverage_errors: coverageErrors,
@@ -181,41 +197,35 @@ export function githubCollectorEnricher(
 
 function recordWatchEvent(
   accumulators: Map<string, CandidateAccumulator>,
-  event: GHArchiveEvent,
-  hour: Date,
-): string | null {
-  const parsed = parseWatchEvent(event, hour);
-  if (parsed.kind === "ignored") {
-    return null;
-  }
-  if (parsed.kind === "invalid") {
-    return parsed.message;
-  }
-
-  const key = parsed.fullName.toLowerCase();
+  event: {
+    fullName: string;
+    createdAt: string;
+    timestamp: number;
+  },
+): void {
+  const key = event.fullName.toLowerCase();
   const existing = accumulators.get(key);
   if (!existing) {
     accumulators.set(key, {
-      fullName: parsed.fullName,
+      fullName: event.fullName,
       watchEvents: 1,
-      firstSeenAt: parsed.createdAt,
-      firstSeenTime: parsed.timestamp,
-      lastSeenAt: parsed.createdAt,
-      lastSeenTime: parsed.timestamp,
+      firstSeenAt: event.createdAt,
+      firstSeenTime: event.timestamp,
+      lastSeenAt: event.createdAt,
+      lastSeenTime: event.timestamp,
     });
-    return null;
+    return;
   }
 
   existing.watchEvents += 1;
-  if (parsed.timestamp < existing.firstSeenTime) {
-    existing.firstSeenAt = parsed.createdAt;
-    existing.firstSeenTime = parsed.timestamp;
+  if (event.timestamp < existing.firstSeenTime) {
+    existing.firstSeenAt = event.createdAt;
+    existing.firstSeenTime = event.timestamp;
   }
-  if (parsed.timestamp > existing.lastSeenTime) {
-    existing.lastSeenAt = parsed.createdAt;
-    existing.lastSeenTime = parsed.timestamp;
+  if (event.timestamp > existing.lastSeenTime) {
+    existing.lastSeenAt = event.createdAt;
+    existing.lastSeenTime = event.timestamp;
   }
-  return null;
 }
 
 function validateOptions(options: CandidateDiscoveryOptions): void {

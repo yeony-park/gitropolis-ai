@@ -221,6 +221,11 @@ node dist/cli.js enrich-activity \
   --min-daily-watch-events 5
 ```
 
+Backfill and discovery validate the stable GH Archive event ID and count an ID
+at most once across the full command window. New snapshots report raw, unique,
+duplicate, missing-ID, invalid-ID, and malformed-record totals without storing
+the original event-ID list.
+
 For higher-recall emerging-keyword research, use a separate Scout pass that
 keeps repositories with at least three events across the full window and
 requests only description and topics:
