@@ -447,6 +447,10 @@ metadata excludes an AI-related repository from the renderable repository list
 and increments `source.excluded_missing_metadata`; it is not converted into a
 zero-valued building.
 
+The first Next.js renderer validates the complete input with a Zod `city-v1`
+schema before constructing any Three.js objects. Invalid or mismatched public
+data produces an explicit loading error instead of a partially rendered city.
+
 A one-day end-to-end canary used the complete 2026-07-30 GH Archive window. It
 observed 999 repositories, enriched the ten repositories with at least five
 WatchEvents, classified four as AI-related, and wrote all four into three

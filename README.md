@@ -131,8 +131,9 @@ The Gitropolis product core uses TypeScript. The local CLI runs on Node.js, and
 the web application uses Next.js, React, Three.js, and Tailwind CSS. Python is
 reserved for data exploration and experimental analysis.
 
-Runtime validation with Zod and JSON Schema will be introduced as the snapshot,
-city, and report schemas are implemented and stabilized.
+The web MVP validates `city-v1` at runtime with Zod. JSON Schema generation and
+runtime validation for the remaining snapshot and report formats will be added
+as those contracts stabilize.
 
 The local CLI will remain runnable without Docker. If the hosted web application
 later requires independently deployable web, API, worker, or database services,
@@ -292,6 +293,33 @@ eligible AI-related repositories and exposes `TOP 5/10/25/50/100` only as
 renderer options. Provisional keyword rules place known broad themes into seven
 districts; unmatched AI repositories stay visible in `frontier`.
 
+### Run the Web MVP
+
+The first interactive city lives in `apps/web`. Install its dependencies and
+start the local Next.js server:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. The city supports orbit and zoom controls,
+district visibility filters, TOP 5/10/25/50/100 highlighting, repository
+selection, GitHub links, and an accessible `/list` view.
+
+The checked-in `apps/web/public/data/city.json` is the verified 2026-07-30
+one-day canary: 4 AI-related repositories from 10 enriched candidates. It is
+not padded with demo repositories, and the interface labels its weekly
+lifecycle coverage as partial. To inspect a newly generated city, replace the
+sample after running `build-city`:
+
+```bash
+cp .gitropolis/city/city.json apps/web/public/data/city.json
+```
+
+The web app validates the replacement as `city-v1` before rendering it.
+
 ## Roadmap
 
 * [x] Candidate GitHub repository collection pipeline
@@ -302,9 +330,9 @@ districts; unmatched AI repositories stay visible in `frontier`.
 * [x] Explainable MVP AI repository classification and keyword observation
 * [x] Renderer-ready `city-v1` data contract
 * [ ] AI-generated repository summarization
-* [ ] City-style 2D or 3D visualization
+* [x] First interactive Three.js city MVP
 * [ ] Repository detail pages
-* [ ] Links to original GitHub repositories
+* [x] Links from city and list views to original GitHub repositories
 * [ ] Trend analysis by technology district
 * [ ] Tracking of appearances in external content
 * [ ] Evaluation of early-detection accuracy
