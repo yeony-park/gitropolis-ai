@@ -224,7 +224,10 @@ node dist/cli.js enrich-activity \
 Backfill and discovery validate the stable GH Archive event ID and count an ID
 at most once across the full command window. New snapshots report raw, unique,
 duplicate, missing-ID, invalid-ID, and malformed-record totals without storing
-the original event-ID list.
+the original event-ID list. The stream parser also reconstructs bounded
+multi-line records when a literal newline splits a JSON string, reports those
+records separately as recovered, and keeps only unrecoverable records as
+coverage errors.
 
 For higher-recall emerging-keyword research, use a separate Scout pass that
 keeps repositories with at least three events across the full window and
