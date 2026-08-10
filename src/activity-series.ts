@@ -5,6 +5,7 @@ import {
   inspectWatchEvent,
   recordInspection,
   recordMalformedRecord,
+  recordRecoveredRecord,
   type EventIntegrityAccumulator,
 } from "./gh-archive/event-integrity.js";
 import type {
@@ -84,6 +85,10 @@ export async function buildActivitySeries(
             `GH Archive record could not be parsed: ${record.message}`,
           );
           continue;
+        }
+        if (record.recovered_lines !== undefined) {
+          recordRecoveredRecord(integrity);
+          recordRecoveredRecord(day.integrity);
         }
         const inspected = inspectWatchEvent(
           record.event,

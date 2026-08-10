@@ -261,6 +261,39 @@ test("incomplete hours mark daily values as partial and disable velocity", async
   assert.equal(snapshot.source.event_integrity?.malformed_records, 1);
 });
 
+test("recovered archive records are counted without reducing coverage", async () => {
+  const archive = new StubArchive({
+    "2026-07-27T00:00:00.000Z": [
+      {
+        kind: "event",
+        line: 1,
+        recovered_lines: 2,
+        event: {
+          id: "issue-comment-1",
+          type: "IssueCommentEvent",
+        },
+      },
+      eventRecord("owner/repository", "2026-07-27T00:05:00Z", 3),
+    ],
+  });
+
+  const snapshot = await buildActivitySeries(
+    {
+      from,
+      days: 1,
+      requestDelayMs: 0,
+    },
+    archive,
+  );
+
+  assert.equal(snapshot.source.archive_coverage_complete, true);
+  assert.equal(snapshot.source.coverage_errors.length, 0);
+  assert.equal(snapshot.source.event_integrity?.recovered_records, 1);
+  assert.equal(snapshot.source.event_integrity?.malformed_records, 0);
+  assert.equal(snapshot.days[0]?.event_integrity?.recovered_records, 1);
+  assert.equal(snapshot.source.watch_events_observed, 1);
+});
+
 test("deduplicates WatchEvent ids across hours and preserves count invariants", async () => {
   const archive = new StubArchive({
     "2026-07-27T00:00:00.000Z": [
@@ -292,6 +325,7 @@ test("deduplicates WatchEvent ids across hours and preserves count invariants", 
     missing_event_ids: 0,
     invalid_event_ids: 0,
     invalid_watch_events: 0,
+    recovered_records: 0,
     malformed_records: 0,
   });
   assert.equal(snapshot.days[0]?.watch_events_observed, 3);
@@ -381,6 +415,7 @@ test("reports invalid identities while allowing a later valid record", async () 
     missing_event_ids: 1,
     invalid_event_ids: 1,
     invalid_watch_events: 3,
+    recovered_records: 0,
     malformed_records: 1,
   });
 });

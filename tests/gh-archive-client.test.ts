@@ -95,6 +95,120 @@ test("GH Archive client skips a malformed record and continues", async () => {
   });
 });
 
+test("GH Archive client recovers literal newlines inside a JSON string", async () => {
+  const multilineEvent = {
+    id: "1001",
+    type: "IssueCommentEvent",
+    payload: { comment: { body: "first line\nsecond line" } },
+  };
+  const followingEvent = {
+    id: "1002",
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "started" },
+    created_at: "2026-07-30T03:20:00Z",
+  };
+  const malformedMultiline = JSON.stringify(multilineEvent).replace(
+    "\\n",
+    "\n",
+  );
+  const client = new GHArchiveClient({
+    fetchImplementation: async () =>
+      new Response(
+        gzipSync(`${malformedMultiline}\n${JSON.stringify(followingEvent)}\n`),
+      ),
+  });
+  const records = [];
+
+  for await (const record of client.recordsForHour(
+    new Date("2026-07-30T03:00:00Z"),
+  )) {
+    records.push(record);
+  }
+
+  assert.deepEqual(records, [
+    {
+      kind: "event",
+      line: 1,
+      event: multilineEvent,
+      recovered_lines: 2,
+    },
+    {
+      kind: "event",
+      line: 3,
+      event: followingEvent,
+    },
+  ]);
+});
+
+test("GH Archive client bounds multiline recovery and preserves a following event", async () => {
+  const followingEvent = {
+    id: "1003",
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "started" },
+    created_at: "2026-07-30T03:30:00Z",
+  };
+  const client = new GHArchiveClient({
+    maxRecordLines: 2,
+    fetchImplementation: async () =>
+      new Response(
+        gzipSync(
+          `{"type":"IssueCommentEvent","payload":{"body":"first\nsecond\n${JSON.stringify(followingEvent)}\n`,
+        ),
+      ),
+  });
+  const records = [];
+
+  for await (const record of client.recordsForHour(
+    new Date("2026-07-30T03:00:00Z"),
+  )) {
+    records.push(record);
+  }
+
+  assert.equal(records[0]?.kind, "parse-error");
+  assert.equal(records[0]?.line, 1);
+  assert.equal(records[0]?.line_end, 2);
+  assert.deepEqual(records.at(-1), {
+    kind: "event",
+    line: 3,
+    event: followingEvent,
+  });
+});
+
+test("GH Archive client stops recovery when the byte limit is reached", async () => {
+  const followingEvent = {
+    id: "1004",
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "started" },
+    created_at: "2026-07-30T03:40:00Z",
+  };
+  const client = new GHArchiveClient({
+    maxRecordBytes: 64,
+    fetchImplementation: async () =>
+      new Response(
+        gzipSync(
+          `{"type":"IssueCommentEvent","payload":{"body":"${"a".repeat(80)}\ncontinued\n${JSON.stringify(followingEvent)}\n`,
+        ),
+      ),
+  });
+  const records = [];
+
+  for await (const record of client.recordsForHour(
+    new Date("2026-07-30T03:00:00Z"),
+  )) {
+    records.push(record);
+  }
+
+  assert.equal(records[0]?.kind, "parse-error");
+  assert.deepEqual(records.at(-1), {
+    kind: "event",
+    line: 3,
+    event: followingEvent,
+  });
+});
+
 test("GH Archive timeout aborts a stalled request", async () => {
   const client = new GHArchiveClient({
     requestTimeoutMs: 5,
