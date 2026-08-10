@@ -25,6 +25,11 @@ import { initializeProject } from "./commands/init.js";
 import { GHArchiveClient } from "./gh-archive/client.js";
 import { GitHubClient } from "./github/client.js";
 import { redactSecrets } from "./security/redact.js";
+import {
+  defaultRepositoryLifecyclePath,
+  writeRepositoryLifecycle,
+} from "./repository-lifecycle-file.js";
+import { deriveRepositoryLifecycle } from "./repository-lifecycle.js";
 import { defaultSnapshotPath, writeSnapshot } from "./snapshot-file.js";
 import type {
   ActivityMetadataProfile,
@@ -48,6 +53,7 @@ Commands:
   discover  Discover fast-growing repositories from GH Archive
   backfill  Build a complete daily GH Archive activity series
   enrich-activity  Add current GitHub metadata using an activity floor
+  lifecycle Derive repository lifecycle from consecutive activity series
   analyze   Classify candidate AI relevance and observe keywords
 
 Options:
@@ -58,6 +64,9 @@ Options:
   --min-daily-watch-events N  Daily activity floor for metadata (default: 5)
   --min-window-watch-events N Full-window activity floor for scout metadata
   --metadata-profile PROFILE  full, classification, or screening (default: full)
+  --main-daily-watch-events N Main Radar daily floor (default: 5)
+  --scout-weekly-watch-events N Emerging Scout weekly floor (default: 3)
+  --fast-breakout-weekly-watch-events N Fast breakout floor (default: 10)
   --request-delay-ms NUMBER   Delay between hourly files (default: 1000)
   --request-timeout-ms NUMBER Timeout for each hourly file (default: 60000)
   --input PATH                Read a candidate or activity-series snapshot
@@ -238,6 +247,40 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
       `Coverage errors: ${snapshot.source.coverage_errors.length}\n`,
     );
     process.stdout.write(`Enriched activity series: ${writtenPath}\n`);
+    return 0;
+  }
+
+  if (command === "lifecycle") {
+    const options = parseLifecycleArguments(commandArguments);
+    const inputs = [];
+    for (const inputPath of options.inputs) {
+      inputs.push({
+        path: resolve(inputPath),
+        snapshot: await readActivitySeries(inputPath),
+      });
+    }
+    const snapshot = deriveRepositoryLifecycle(inputs, {
+      mainDailyWatchEvents: options.mainDailyWatchEvents,
+      scoutWeeklyWatchEvents: options.scoutWeeklyWatchEvents,
+      fastBreakoutWeeklyWatchEvents: options.fastBreakoutWeeklyWatchEvents,
+    });
+    const outputPath =
+      options.output ??
+      defaultRepositoryLifecyclePath(
+        options.directory ?? process.cwd(),
+        snapshot,
+      );
+    const writtenPath = await writeRepositoryLifecycle(snapshot, outputPath);
+    const states = countLifecycleStates(snapshot.repositories);
+
+    process.stdout.write(
+      `Lifecycle weeks: ${snapshot.weeks.length}; inputs: ${snapshot.source.input_snapshots.length}\n`,
+    );
+    process.stdout.write(
+      `Repository states: ${states.candidate} candidate, ${states.active} active, ${states.cooling} cooling, ${states.inactive} inactive, ${states.untracked} below lifecycle entry\n`,
+    );
+    process.stdout.write(`Lifecycle events: ${snapshot.events.length}\n`);
+    process.stdout.write(`Repository lifecycle: ${writtenPath}\n`);
     return 0;
   }
 
@@ -462,6 +505,73 @@ export interface AnalysisCliOptions {
   maxReadmeCharacters: number;
 }
 
+export interface LifecycleCliOptions {
+  directory?: string;
+  output?: string;
+  inputs: string[];
+  mainDailyWatchEvents: number;
+  scoutWeeklyWatchEvents: number;
+  fastBreakoutWeeklyWatchEvents: number;
+}
+
+export function parseLifecycleArguments(
+  arguments_: readonly string[],
+): LifecycleCliOptions {
+  const inputs: string[] = [];
+  const values: Record<string, string> = {};
+  const supported = new Set([
+    "--directory",
+    "--output",
+    "--input",
+    "--main-daily-watch-events",
+    "--scout-weekly-watch-events",
+    "--fast-breakout-weekly-watch-events",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (!argument?.startsWith("--") || !supported.has(argument)) {
+      throw new Error(`Unknown lifecycle argument: ${argument ?? ""}`);
+    }
+    const value = arguments_[index + 1];
+    if (!value) {
+      throw new Error(`${argument} requires a value.`);
+    }
+    if (argument === "--input") {
+      inputs.push(value);
+    } else {
+      values[argument] = value;
+    }
+    index += 1;
+  }
+  if (inputs.length === 0) {
+    throw new Error("lifecycle requires at least one --input.");
+  }
+
+  return {
+    ...(values["--directory"]
+      ? { directory: values["--directory"] }
+      : {}),
+    ...(values["--output"] ? { output: values["--output"] } : {}),
+    inputs,
+    mainDailyWatchEvents: positiveIntegerOption(
+      values["--main-daily-watch-events"],
+      "--main-daily-watch-events",
+      5,
+    ),
+    scoutWeeklyWatchEvents: positiveIntegerOption(
+      values["--scout-weekly-watch-events"],
+      "--scout-weekly-watch-events",
+      3,
+    ),
+    fastBreakoutWeeklyWatchEvents: positiveIntegerOption(
+      values["--fast-breakout-weekly-watch-events"],
+      "--fast-breakout-weekly-watch-events",
+      10,
+    ),
+  };
+}
+
 export function parseAnalysisArguments(
   arguments_: readonly string[],
 ): AnalysisCliOptions {
@@ -546,6 +656,34 @@ function countCommunityStatuses(
     ).length,
     unknown: repositories.filter(
       ({ community_status: status }) => status === "unknown",
+    ).length,
+  };
+}
+
+function countLifecycleStates(
+  repositories: readonly { radar_status: string | null }[],
+): {
+  candidate: number;
+  active: number;
+  cooling: number;
+  inactive: number;
+  untracked: number;
+} {
+  return {
+    candidate: repositories.filter(
+      ({ radar_status: status }) => status === "candidate",
+    ).length,
+    active: repositories.filter(
+      ({ radar_status: status }) => status === "active",
+    ).length,
+    cooling: repositories.filter(
+      ({ radar_status: status }) => status === "cooling",
+    ).length,
+    inactive: repositories.filter(
+      ({ radar_status: status }) => status === "inactive",
+    ).length,
+    untracked: repositories.filter(
+      ({ radar_status: status }) => status === null,
     ).length,
   };
 }

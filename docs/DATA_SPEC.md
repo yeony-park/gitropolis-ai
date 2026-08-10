@@ -242,6 +242,68 @@ because the final nine August 4 UTC files were not yet published. The partial
 snapshot retained 3,108 unique WatchEvents, zero identity anomalies, and 43
 malformed lines without representing the four-day window as complete.
 
+## Repository lifecycle
+
+The `lifecycle` command reads one or more ordered, consecutive
+`activity-series-v1` snapshots and writes `repository-lifecycle-v1`. Inputs may
+use one-to-seven-day collection batches; the command combines their daily
+observations and derives Monday 00:00 UTC through Monday 00:00 UTC weeks. A gap,
+overlap, or out-of-order input is rejected instead of being silently repaired.
+
+The default screening signals are independent:
+
+- **Main Radar:** at least five observed WatchEvents in one UTC day;
+- **Emerging Scout:** at least three observed WatchEvents in the ISO week;
+- **Fast breakout:** at least ten observed WatchEvents in the ISO week.
+
+These thresholds can be overridden for evaluation. Screening membership does
+not itself define lifecycle state. The initial deterministic lifecycle is:
+
+```text
+candidate → active → cooling → inactive
+```
+
+- A first complete observed week at or above Scout enters `candidate`.
+- Two consecutive observed Scout-qualified weeks promote a candidate to
+  `active`.
+- Three strictly increasing complete weeks may enter `active` when the third
+  week first reaches Scout.
+- A first confirmed week below Scout changes a candidate or active repository
+  to `cooling`; a second consecutive confirmed week changes it to `inactive`.
+- An inactive repository that reaches Scout again emits `revived` and returns
+  to `candidate`.
+- A new or revived fast breakout remains a candidate with
+  `breakout_status=pending` until the next observable week. At least Scout
+  activity confirms it; a confirmed below-Scout week marks it unconfirmed.
+
+Coverage is represented at three levels. `complete` means all seven calendar
+days, all 168 hourly files, and all records were processed. `record-warning`
+means all hours are present but at least one record-level error remains;
+observed positive threshold crossings are usable lower bounds, while negative
+transitions are blocked. `temporal-incomplete` means a calendar day or hourly
+file is absent and freezes lifecycle state. Partial leading and trailing ISO
+weeks are retained as temporal-incomplete rather than padded with measured
+zeros.
+
+Legacy activity snapshots without `event_integrity` remain valid inputs. Each
+input, week, and repository-week record exposes integrity verification as
+`verified`, `partial`, or `unavailable`. The absence of a historical integrity
+field is not converted into a false success or failure.
+
+Each lifecycle repository contains all observed activity needed for its weekly
+history, Main and Scout membership, current lifecycle state, consecutive-week
+counters, breakout state, availability state, and stable GitHub repository ID
+when metadata provided one. Availability is `available`, `unavailable`, or
+`unknown` and is never inferred from WatchEvent absence. Input lineage stores
+file names without local directory paths.
+
+Lifecycle events contain the repository identity, event type, effective week,
+previous state, next state, and a deterministic reason. Event types include
+candidate detection, activation, cooling, inactivation, revival, breakout
+detection and resolution, and data-incomplete protection. The output's
+`generated_at` is derived from the exclusive end of the latest input day, so
+the same ordered inputs and thresholds produce the same JSON values.
+
 ## AI relevance and keyword observation
 
 The `analyze` command reads an existing `candidate-v1` or enriched
