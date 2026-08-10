@@ -13,6 +13,7 @@ export interface EventIntegrityAccumulator {
   missingEventIds: number;
   invalidEventIds: number;
   invalidWatchEvents: number;
+  recoveredRecords: number;
   malformedRecords: number;
 }
 
@@ -29,6 +30,7 @@ export function createEventIntegrityAccumulator(): EventIntegrityAccumulator {
     missingEventIds: 0,
     invalidEventIds: 0,
     invalidWatchEvents: 0,
+    recoveredRecords: 0,
     malformedRecords: 0,
   };
 }
@@ -83,6 +85,12 @@ export function recordMalformedRecord(
   accumulator.malformedRecords += 1;
 }
 
+export function recordRecoveredRecord(
+  accumulator: EventIntegrityAccumulator,
+): void {
+  accumulator.recoveredRecords += 1;
+}
+
 export function eventIntegritySnapshot(
   accumulator: EventIntegrityAccumulator,
 ): GHArchiveEventIntegrity {
@@ -94,6 +102,7 @@ export function eventIntegritySnapshot(
     missing_event_ids: accumulator.missingEventIds,
     invalid_event_ids: accumulator.invalidEventIds,
     invalid_watch_events: accumulator.invalidWatchEvents,
+    recovered_records: accumulator.recoveredRecords,
     malformed_records: accumulator.malformedRecords,
   };
 }

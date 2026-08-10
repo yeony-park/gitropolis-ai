@@ -26,6 +26,7 @@ const INTEGRITY: GHArchiveEventIntegrity = {
   missing_event_ids: 0,
   invalid_event_ids: 0,
   invalid_watch_events: 0,
+  recovered_records: 0,
   malformed_records: 0,
 };
 

@@ -9,6 +9,7 @@ import {
   inspectWatchEvent,
   recordInspection,
   recordMalformedRecord,
+  recordRecoveredRecord,
 } from "./gh-archive/event-integrity.js";
 import type { GitHubApiClient } from "./github/client.js";
 import type {
@@ -70,6 +71,9 @@ export async function discoverCandidates(
             message: `GH Archive record could not be parsed: ${record.message}`,
           });
           continue;
+        }
+        if (record.recovered_lines !== undefined) {
+          recordRecoveredRecord(integrity);
         }
         const inspected = inspectWatchEvent(
           record.event,

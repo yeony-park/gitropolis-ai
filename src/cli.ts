@@ -817,6 +817,7 @@ function writeEventIntegritySummary(
         duplicate_event_ids: number;
         missing_event_ids: number;
         invalid_event_ids: number;
+        recovered_records?: number;
         malformed_records: number;
       }
     | undefined,
@@ -825,7 +826,7 @@ function writeEventIntegritySummary(
     return;
   }
   process.stdout.write(
-    `Event integrity: ${integrity.unique_watch_events}/${integrity.raw_watch_events_seen} unique, ${integrity.duplicate_event_ids} duplicates, ${integrity.missing_event_ids} missing IDs, ${integrity.invalid_event_ids} invalid IDs, ${integrity.malformed_records} malformed records\n`,
+    `Event integrity: ${integrity.unique_watch_events}/${integrity.raw_watch_events_seen} unique, ${integrity.duplicate_event_ids} duplicates, ${integrity.missing_event_ids} missing IDs, ${integrity.invalid_event_ids} invalid IDs, ${integrity.recovered_records ?? 0} recovered records, ${integrity.malformed_records} malformed records\n`,
   );
 }
 

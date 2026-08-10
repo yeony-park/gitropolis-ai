@@ -212,7 +212,12 @@ inputs. The object contains:
 | `missing_event_ids` | `WatchEvent` records without an ID |
 | `invalid_event_ids` | IDs that are not positive decimal strings |
 | `invalid_watch_events` | All `WatchEvent` records rejected by identity or semantic validation |
-| `malformed_records` | Archive lines that could not be parsed as JSON objects |
+| `recovered_records` | JSON objects reconstructed from bounded physical lines split by literal newlines inside strings |
+| `malformed_records` | Logical archive records that remain unparseable after bounded recovery |
+
+`recovered_records` is additive. Older event-integrity objects without the
+field remain valid inputs and are interpreted as having no recorded recovery
+count, not as proof that recovery was unnecessary.
 
 Only an event that passes ID, action, repository-name, timestamp, and hourly
 window validation is registered in the accepted-ID set. This allows a valid
@@ -224,9 +229,12 @@ hourly file.
 A duplicate does not make coverage incomplete because it is removed
 deterministically. Missing or invalid IDs, malformed records, semantically
 invalid WatchEvents, failed hourly files, and partial streams remain coverage
-errors. Accepted WatchEvent totals in the source, daily buckets, repository
-records, and `event_integrity.unique_watch_events` describe the same
-deduplicated population.
+errors. A fully recovered record is counted in `recovered_records` and does not
+make coverage incomplete. Recovery is limited to structurally incomplete JSON
+objects whose string value remains open, with fixed line and byte bounds; the
+parser does not join arbitrary malformed records. Accepted WatchEvent totals in
+the source, daily buckets, repository records, and
+`event_integrity.unique_watch_events` describe the same deduplicated population.
 
 An integrity verification reran 2026-07-01 through 2026-07-07 and reproduced
 the earlier 45,547 WatchEvents and 24,995 repositories exactly. It found zero
@@ -241,6 +249,14 @@ A 2026-08-01 through 2026-08-04 update collected 87 of the requested 96 hours
 because the final nine August 4 UTC files were not yet published. The partial
 snapshot retained 3,108 unique WatchEvents, zero identity anomalies, and 43
 malformed lines without representing the four-day window as complete.
+
+After bounded multi-line recovery was implemented, all 24 files for
+2026-07-30 were reprocessed. The parser produced 3,963,407 logical records,
+recovered 11 objects that had previously appeared as 22 malformed physical
+lines, and left zero unrecoverable records. The recovered sample contained nine
+`IssueCommentEvent` records and two `CreateEvent` records, not WatchEvents. This
+sample verifies the recovery path but does not guarantee that every future
+archive defect will be recoverable.
 
 ## Repository lifecycle
 
@@ -430,8 +446,10 @@ An API failure must never be stored as a numeric zero.
 - An exhausted or long rate limit stops further repository requests while
   preserving repository records collected before the limit.
 - Partial endpoint failures are recorded as incomplete coverage.
-- Missing or malformed GH Archive records are never counted as valid events and
-  are exposed through candidate coverage errors.
+- Fully recovered GH Archive records remain eligible for normal semantic
+  validation and are reported separately without reducing coverage.
+- Unrecoverable GH Archive records are never counted as valid events and are
+  exposed through candidate coverage errors.
 - Repeated accepted GH Archive event IDs are counted once and reported through
   `event_integrity`; handled duplicates do not make coverage incomplete.
 - A repository-detail failure does not discard successful repository records

@@ -6,5 +6,6 @@ export interface GHArchiveEventIntegrity {
   missing_event_ids: number;
   invalid_event_ids: number;
   invalid_watch_events: number;
+  recovered_records?: number;
   malformed_records: number;
 }
