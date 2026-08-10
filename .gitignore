@@ -12,6 +12,7 @@ node_modules/
 .next/
 coverage/
 .test-dist/
+*.tsbuildinfo
 
 # Python
 __pycache__/
