@@ -277,6 +277,21 @@ The command uses the collected description and topics, fetches only the README
 content needed for analysis, and writes `topic-analysis-v1` under
 `.gitropolis/observations/`. Raw README content is not stored in the output.
 
+Join an enriched activity snapshot, its topic analysis, and a lifecycle that
+covers the same window into the first renderer-ready city dataset:
+
+```bash
+node dist/cli.js build-city \
+  --activity .gitropolis/activity/WEEK-enriched.json \
+  --analysis .gitropolis/observations/WEEK.json \
+  --lifecycle .gitropolis/lifecycle/PERIOD.json
+```
+
+The command writes `city-v1` to `.gitropolis/city/city.json`. It preserves all
+eligible AI-related repositories and exposes `TOP 5/10/25/50/100` only as
+renderer options. Provisional keyword rules place known broad themes into seven
+districts; unmatched AI repositories stay visible in `frontier`.
+
 ## Roadmap
 
 * [x] Candidate GitHub repository collection pipeline
@@ -285,6 +300,7 @@ content needed for analysis, and writes `topic-analysis-v1` under
 * [ ] Radar scoring based on growth velocity and acceleration
 * [ ] Filtering of abnormal one-time Star spikes
 * [x] Explainable MVP AI repository classification and keyword observation
+* [x] Renderer-ready `city-v1` data contract
 * [ ] AI-generated repository summarization
 * [ ] City-style 2D or 3D visualization
 * [ ] Repository detail pages

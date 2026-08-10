@@ -75,6 +75,21 @@ export async function writeTopicAnalysisSnapshot(
   return resolvedPath;
 }
 
+export async function readTopicAnalysisSnapshot(
+  inputPath: string,
+): Promise<TopicAnalysisSnapshot> {
+  const resolvedPath = resolve(inputPath);
+  const parsed = JSON.parse(await readFile(resolvedPath, "utf8")) as unknown;
+  if (
+    !isRecord(parsed) ||
+    parsed.schema_version !== "topic-analysis-v1" ||
+    !Array.isArray(parsed.repositories)
+  ) {
+    throw new Error(`Input is not a topic-analysis-v1 snapshot: ${resolvedPath}`);
+  }
+  return parsed as unknown as TopicAnalysisSnapshot;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

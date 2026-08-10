@@ -22,11 +22,14 @@ import {
 } from "./candidate-file.js";
 import { collectSnapshot } from "./collector.js";
 import { initializeProject } from "./commands/init.js";
+import { buildCitySnapshot } from "./city-builder.js";
+import { defaultCityPath, writeCitySnapshot } from "./city-file.js";
 import { GHArchiveClient } from "./gh-archive/client.js";
 import { GitHubClient } from "./github/client.js";
 import { redactSecrets } from "./security/redact.js";
 import {
   defaultRepositoryLifecyclePath,
+  readRepositoryLifecycle,
   writeRepositoryLifecycle,
 } from "./repository-lifecycle-file.js";
 import { deriveRepositoryLifecycle } from "./repository-lifecycle.js";
@@ -42,6 +45,7 @@ import {
 import {
   defaultTopicAnalysisPath,
   readAnalysisInput,
+  readTopicAnalysisSnapshot,
   writeTopicAnalysisSnapshot,
 } from "./topic-analysis-file.js";
 
@@ -55,6 +59,7 @@ Commands:
   enrich-activity  Add current GitHub metadata using an activity floor
   lifecycle Derive repository lifecycle from consecutive activity series
   analyze   Classify candidate AI relevance and observe keywords
+  build-city Join activity, analysis, and lifecycle into city-v1
 
 Options:
   --from ISO_TIME             UTC hour at which discovery starts
@@ -70,6 +75,9 @@ Options:
   --request-delay-ms NUMBER   Delay between hourly files (default: 1000)
   --request-timeout-ms NUMBER Timeout for each hourly file (default: 60000)
   --input PATH                Read a candidate or activity-series snapshot
+  --activity PATH             Read an enriched activity-series-v1 snapshot
+  --analysis PATH             Read a topic-analysis-v1 snapshot
+  --lifecycle PATH            Read a repository-lifecycle-v1 snapshot
   --max-readme-characters N   Maximum README prefix to analyze (default: 12000)
   --output PATH               Write output to a specific path
   -h, --help                  Show this help message
@@ -322,6 +330,29 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     return 0;
   }
 
+  if (command === "build-city") {
+    const options = parseCityArguments(commandArguments);
+    const [activity, analysis, lifecycle] = await Promise.all([
+      readActivitySeries(options.activity),
+      readTopicAnalysisSnapshot(options.analysis),
+      readRepositoryLifecycle(options.lifecycle),
+    ]);
+    const snapshot = buildCitySnapshot({ activity, analysis, lifecycle });
+    const outputPath =
+      options.output ?? defaultCityPath(options.directory ?? process.cwd());
+    const writtenPath = await writeCitySnapshot(snapshot, outputPath);
+
+    process.stdout.write(
+      `City repositories: ${snapshot.repositories.length}/${snapshot.source.ai_related_repositories} AI-related included\n`,
+    );
+    process.stdout.write(`City communities: ${snapshot.communities.length}\n`);
+    process.stdout.write(
+      `Coverage: ${snapshot.source.coverage_complete ? "complete" : "incomplete"}\n`,
+    );
+    process.stdout.write(`City snapshot: ${writtenPath}\n`);
+    return 0;
+  }
+
   process.stderr.write(`Unknown command: ${command}\n\n${HELP}`);
   return 1;
 }
@@ -503,6 +534,59 @@ export interface AnalysisCliOptions {
   input: string;
   output?: string;
   maxReadmeCharacters: number;
+}
+
+export interface CityCliOptions {
+  directory?: string;
+  output?: string;
+  activity: string;
+  analysis: string;
+  lifecycle: string;
+}
+
+export function parseCityArguments(
+  arguments_: readonly string[],
+): CityCliOptions {
+  const values: Record<string, string> = {};
+  const supported = new Set([
+    "--directory",
+    "--output",
+    "--activity",
+    "--analysis",
+    "--lifecycle",
+  ]);
+
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (!argument?.startsWith("--") || !supported.has(argument)) {
+      throw new Error(`Unknown build-city argument: ${argument ?? ""}`);
+    }
+    const value = arguments_[index + 1];
+    if (!value) {
+      throw new Error(`${argument} requires a value.`);
+    }
+    values[argument] = value;
+    index += 1;
+  }
+
+  const activity = values["--activity"];
+  const analysis = values["--analysis"];
+  const lifecycle = values["--lifecycle"];
+  if (!activity || !analysis || !lifecycle) {
+    throw new Error(
+      "build-city requires --activity, --analysis, and --lifecycle.",
+    );
+  }
+
+  return {
+    ...(values["--directory"]
+      ? { directory: values["--directory"] }
+      : {}),
+    ...(values["--output"] ? { output: values["--output"] } : {}),
+    activity,
+    analysis,
+    lifecycle,
+  };
 }
 
 export interface LifecycleCliOptions {
