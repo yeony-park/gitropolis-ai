@@ -1,7 +1,7 @@
 # Gitropolis Data Specification
 
 > Status: Early public contract
-> Last updated: 2026-08-05
+> Last updated: 2026-08-10
 > GitHub REST API version: `2026-03-10`
 
 This document contains data behavior that has been implemented or verified well
@@ -398,6 +398,62 @@ Archive records. Network-free tests separately verify `graph-rag` repeated
 across five repositories and a single-repository `agentic-rag` observation.
 This check establishes technical feasibility only and is not a representative
 accuracy benchmark.
+
+## Renderer-ready city data
+
+The `build-city` command joins three already-created inputs:
+
+- one enriched `activity-series-v1` snapshot;
+- a `topic-analysis-v1` derived from that exact activity window;
+- a `repository-lifecycle-v1` whose window covers the activity window.
+
+The builder rejects a candidate-only analysis or mismatched windows rather than
+joining unrelated observations. Repository joins use the stable numeric GitHub
+repository ID whenever it is available. A case-insensitive `full_name` fallback
+is used only for a side of the join that lacks a stable ID, so a renamed path or
+reused repository name cannot silently replace a known identity.
+
+The first city methodology is deliberately provisional. It includes only
+repositories classified `ai-related` by the supplied analysis and for which
+current GitHub metadata exists. A primary community is selected from observed
+non-broad keywords using AI-related repository frequency, source confidence,
+occurrence count, and a deterministic lexical tie break. Broad keyword rules
+assign one of seven macro districts; unmatched AI repositories remain visible
+in `frontier`. These rules organize the MVP renderer and do not claim to be a
+verified ontology or final Topic Momentum model.
+
+### `city-v1`
+
+Each city snapshot contains:
+
+- a deterministic generation time derived from source timestamps;
+- the activity window and input methodology versions;
+- separate activity, analysis, and lifecycle coverage plus combined coverage;
+- all eight district definitions, including `frontier`;
+- observed communities with provisional `unknown` or `emerging` status;
+- every eligible repository without a top-N storage cutoff;
+- current stars, forks, commit and contributor aggregates;
+- window WatchEvents and the latest covering lifecycle-week activity;
+- AI relevance, lifecycle, availability, breakout, community, and district
+  fields needed by the renderer;
+- deterministic global and per-community ranks;
+- empty repository and community edge arrays reserved for later verified graph
+  derivation;
+- renderer options for `TOP 5/10/25/50/100` and an initial visible budget of
+  100 buildings.
+
+Repositories below the renderer's selected TOP N remain in `city-v1`. Missing
+metadata excludes an AI-related repository from the renderable repository list
+and increments `source.excluded_missing_metadata`; it is not converted into a
+zero-valued building.
+
+A one-day end-to-end canary used the complete 2026-07-30 GH Archive window. It
+observed 999 repositories, enriched the ten repositories with at least five
+WatchEvents, classified four as AI-related, and wrote all four into three
+communities across the eight defined districts. Combined city coverage was
+correctly incomplete because a single day cannot form a complete ISO lifecycle
+week. These counts verify the vertical data flow and are not a stable ranking or
+classifier benchmark.
 
 ## `snapshot-v1`
 
