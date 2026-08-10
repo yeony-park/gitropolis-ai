@@ -36,10 +36,27 @@ export type CityRepositoryFlag =
   | "inactive"
   | "frontier";
 
+export interface CityDetectionExplanation {
+  methodology_version: "repository-detection-explanation-v1";
+  label: "Why Gitropolis noticed it";
+  summary: string;
+  signals: {
+    window_watch_events: number;
+    max_daily_watch_events: number;
+    active_days: number;
+    selection_rule: string;
+    archive_coverage_complete: boolean;
+  };
+}
+
 export interface CityRepository {
   repository_id: number;
   full_name: string;
   url: string;
+  /** Added additively in city-v1. Older snapshots may omit this field. */
+  description?: string | null;
+  /** Added additively in city-v1. Older snapshots may omit this field. */
+  detection_explanation?: CityDetectionExplanation;
   district_id: CityDistrictId;
   community_id: string;
   global_rank: number;
@@ -82,10 +99,18 @@ export interface CitySnapshot {
     analysis_coverage_complete: boolean;
     lifecycle_coverage_complete: boolean;
     coverage_complete: boolean;
+    /** GH Archive event coverage, independent from later GitHub metadata calls. */
+    archive_coverage_complete?: boolean;
+    /** GitHub repository-profile coverage for the selected candidates. */
+    metadata_coverage_complete?: boolean;
     repositories_considered: number;
     ai_related_repositories: number;
     included_repositories: number;
     excluded_missing_metadata: number;
+    /** Present when the activity snapshot was enriched with GitHub metadata. */
+    metadata_collected_at?: string | null;
+    /** Human-readable form of the deterministic metadata selection threshold. */
+    metadata_selection_rule?: string | null;
   };
   districts: CityDistrict[];
   communities: CityCommunity[];

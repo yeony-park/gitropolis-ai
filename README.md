@@ -306,19 +306,31 @@ npm run dev
 
 Open `http://localhost:3000`. The city supports orbit and zoom controls,
 district visibility filters, TOP 5/10/25/50/100 highlighting, repository
-selection, GitHub links, and an accessible `/list` view.
+selection, GitHub links, and an accessible `/list` view. Repository details use
+the current GitHub description and a deterministic `Why Gitropolis noticed it`
+summary of observed signals; they do not claim to explain why a repository
+became popular. Facade windows represent commits in the latest 30 days, with an
+explicit neutral fallback when that aggregate is unavailable.
 
-The checked-in `apps/web/public/data/city.json` is the verified 2026-07-30
-one-day canary: 4 AI-related repositories from 10 enriched candidates. It is
-not padded with demo repositories, and the interface labels its weekly
-lifecycle coverage as partial. To inspect a newly generated city, replace the
-sample after running `build-city`:
+The checked-in `apps/web/public/data/city.json` is the verified complete
+2026-08-03 through 2026-08-10 UTC snapshot: 80 AI-related repositories from 181
+selected candidates. Of those candidates, 177 were fully profiled and four
+were unavailable. The raw GH Archive window covers 168/168 hours, while
+metadata coverage remains partial and is labeled separately. The dataset is
+not padded or trimmed after AI classification. To inspect a newly generated
+city, replace the sample after running `build-city`:
 
 ```bash
 cp .gitropolis/city/city.json apps/web/public/data/city.json
 ```
 
 The web app validates the replacement as `city-v1` before rendering it.
+The checked-in scale test renders buildings and facade windows as district-level
+Three.js instances. On the validation machine at a 1280×720 viewport and a 1.75
+renderer pixel-ratio cap, the visible foreground sample held 60 FPS with a
+16.7 ms median frame and 17.6 ms p95 while rendering all 80 buildings in 38 draw
+calls. Performance numbers are hardware- and browser-specific measurements, not
+a universal guarantee.
 
 ## Roadmap
 

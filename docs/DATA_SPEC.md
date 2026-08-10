@@ -428,10 +428,16 @@ Each city snapshot contains:
 
 - a deterministic generation time derived from source timestamps;
 - the activity window and input methodology versions;
-- separate activity, analysis, and lifecycle coverage plus combined coverage;
+- separate raw GH Archive, GitHub metadata, activity, analysis, and lifecycle
+  coverage plus combined coverage;
 - all eight district definitions, including `frontier`;
 - observed communities with provisional `unknown` or `emerging` status;
 - every eligible repository without a top-N storage cutoff;
+- the current GitHub description as collected with repository metadata, or
+  `null` when GitHub provides none;
+- a deterministic `Why Gitropolis noticed it` explanation containing only
+  observed WatchEvents, the daily maximum, active-day count, the exact
+  selection threshold, and archive coverage;
 - current stars, forks, commit and contributor aggregates;
 - window WatchEvents and the latest covering lifecycle-week activity;
 - AI relevance, lifecycle, availability, breakout, community, and district
@@ -447,17 +453,33 @@ metadata excludes an AI-related repository from the renderable repository list
 and increments `source.excluded_missing_metadata`; it is not converted into a
 zero-valued building.
 
+`source.archive_coverage_complete` describes the historical GH Archive window
+independently from `source.metadata_coverage_complete`. A complete archive may
+therefore produce a partially enriched city when a current GitHub repository is
+unavailable. `source.metadata_collected_at` identifies when current repository
+descriptions and 30-day commit aggregates were retrieved. Those current values
+must not be represented as historical facts about the activity window.
+
+The explanation is a detection account, not a causal claim about why a
+repository became popular. Raw README text is not copied into `city-v1`.
+`description`, `detection_explanation`, and the split coverage fields were
+added to the existing `city-v1` contract. Readers must continue to accept older
+snapshots that omit these additive fields.
+
 The first Next.js renderer validates the complete input with a Zod `city-v1`
 schema before constructing any Three.js objects. Invalid or mismatched public
 data produces an explicit loading error instead of a partially rendered city.
 
-A one-day end-to-end canary used the complete 2026-07-30 GH Archive window. It
-observed 999 repositories, enriched the ten repositories with at least five
-WatchEvents, classified four as AI-related, and wrote all four into three
-communities across the eight defined districts. Combined city coverage was
-correctly incomplete because a single day cannot form a complete ISO lifecycle
-week. These counts verify the vertical data flow and are not a stable ranking or
-classifier benchmark.
+A complete seven-day scale check used the 2026-08-03 through 2026-08-10 UTC
+window. All 168 hourly archives were collected, containing 24,419 unique
+WatchEvents across 15,304 repositories with no archive coverage error. A daily
+threshold of ten produced only 62 AI-related repositories, so the pre-enrichment
+threshold was relaxed once to eight and the entire downstream pipeline was
+rerun. This selected 181 repositories for full metadata, of which 177 were
+currently accessible; rule analysis found exactly 80 AI-related repositories.
+All 80 were written into 19 communities without padding or a post-analysis rank
+cutoff. Combined city coverage remains partial because four selected GitHub
+repositories were unavailable, while raw archive coverage is complete.
 
 ## `snapshot-v1`
 
