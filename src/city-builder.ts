@@ -3,6 +3,7 @@ import type {
   CityCommunity,
   CityDistrict,
   CityDistrictId,
+  CityDetectionExplanation,
   CityRepository,
   CityRepositoryFlag,
   CitySnapshot,
@@ -164,6 +165,11 @@ export function buildCitySnapshot(inputs: CityBuilderInputs): CitySnapshot {
         repository_id: current.id,
         full_name: current.full_name,
         url: current.html_url,
+        description: current.description,
+        detection_explanation: buildDetectionExplanation(
+          activity,
+          inputs.activity,
+        ),
         district_id: districtId,
         community_id: communityId,
         ai_relevance: analyzed.ai_relevance.score,
@@ -226,10 +232,19 @@ export function buildCitySnapshot(inputs: CityBuilderInputs): CitySnapshot {
         inputs.activity.source.coverage_complete &&
         inputs.analysis.source.coverage_complete &&
         inputs.lifecycle.source.coverage_complete,
+      archive_coverage_complete:
+        inputs.activity.source.archive_coverage_complete,
+      metadata_coverage_complete:
+        inputs.activity.source.metadata_coverage_complete,
       repositories_considered: inputs.analysis.repositories.length,
       ai_related_repositories: related.length,
       included_repositories: repositories.length,
       excluded_missing_metadata: excludedMissingMetadata,
+      metadata_collected_at:
+        inputs.activity.source.metadata_selection?.collected_at ?? null,
+      metadata_selection_rule: inputs.activity.source.metadata_selection
+        ? formatMetadataSelectionRule(inputs.activity.source.metadata_selection)
+        : null,
     },
     districts: CITY_DISTRICTS.map((district) => ({ ...district })),
     communities: buildCommunities(repositories, relatedKeywordCounts),
@@ -241,6 +256,51 @@ export function buildCitySnapshot(inputs: CityBuilderInputs): CitySnapshot {
       mvp_visible_budget: 100,
     },
   };
+}
+
+function buildDetectionExplanation(
+  repository: ActivitySeriesSnapshot["repositories"][number],
+  snapshot: ActivitySeriesSnapshot,
+): CityDetectionExplanation {
+  const maxDailyWatchEvents = Math.max(
+    0,
+    ...repository.daily.map(({ watch_events_observed: value }) => value),
+  );
+  const activeDays = repository.daily.filter(
+    ({ watch_events_observed: value }) => value > 0,
+  ).length;
+  const selectionRule = formatMetadataSelectionRule(
+    snapshot.source.metadata_selection,
+  );
+  return {
+    methodology_version: "repository-detection-explanation-v1",
+    label: "Why Gitropolis noticed it",
+    summary:
+      `Gitropolis noticed this repository after observing ` +
+      `${repository.watch_events_observed_total} WatchEvents from ${snapshot.window.from} inclusive ` +
+      `to ${snapshot.window.to} exclusive, ` +
+      `with a daily peak of ${maxDailyWatchEvents} across ${activeDays} active days. ` +
+      `It met the metadata selection rule: ${selectionRule}.`,
+    signals: {
+      window_watch_events: repository.watch_events_observed_total,
+      max_daily_watch_events: maxDailyWatchEvents,
+      active_days: activeDays,
+      selection_rule: selectionRule,
+      archive_coverage_complete: snapshot.source.archive_coverage_complete,
+    },
+  };
+}
+
+function formatMetadataSelectionRule(
+  selection: ActivitySeriesSnapshot["source"]["metadata_selection"],
+): string {
+  if (!selection) {
+    return "no metadata selection rule was recorded";
+  }
+  if (selection.method === "minimum-daily-watch-events") {
+    return `at least ${selection.minimum_daily_watch_events} WatchEvents in one UTC day`;
+  }
+  return `at least ${selection.minimum_window_watch_events} WatchEvents across the full window`;
 }
 
 function validateInputs(inputs: CityBuilderInputs): void {

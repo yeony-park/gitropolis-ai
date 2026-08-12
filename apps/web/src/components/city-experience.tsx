@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { CityCanvas, type CityHover } from "@/components/city-canvas";
+import {
+  CityCanvas,
+  type CityHover,
+  type CityPerformanceMetrics,
+} from "@/components/city-canvas";
 import {
   fetchCitySnapshot,
   type CityRepository,
@@ -34,6 +38,7 @@ export function CityExperience() {
   const [hover, setHover] = useState<CityHover | null>(null);
   const [selected, setSelected] = useState<CityRepository | null>(null);
   const [focusRepositoryId, setFocusRepositoryId] = useState<number | null>(null);
+  const [performanceMetrics, setPerformanceMetrics] = useState<CityPerformanceMetrics | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -117,9 +122,20 @@ export function CityExperience() {
   const selectedDistrict = selected
     ? snapshot.districts.find((district) => district.id === selected.district_id)
     : null;
+  const archiveCoverageComplete =
+    snapshot.source.archive_coverage_complete ??
+    snapshot.source.activity_coverage_complete;
+  const metadataCoverageComplete =
+    snapshot.source.metadata_coverage_complete ??
+    snapshot.source.activity_coverage_complete;
 
   return (
-    <main className="relative h-dvh min-h-[680px] overflow-hidden bg-[#030610] text-slate-100">
+    <main
+      className="relative h-dvh min-h-[680px] overflow-hidden bg-[#030610] text-slate-100"
+      data-performance-metrics={
+        performanceMetrics ? JSON.stringify(performanceMetrics) : undefined
+      }
+    >
       <CityCanvas
         snapshot={snapshot}
         enabledDistricts={enabledDistricts}
@@ -127,6 +143,7 @@ export function CityExperience() {
         focusRepositoryId={focusRepositoryId}
         onHover={setHover}
         onSelect={selectRepository}
+        onMetrics={setPerformanceMetrics}
       />
 
       <header className="glass-panel absolute left-4 top-4 z-10 w-[min(350px,calc(100vw-32px))] p-4 md:left-6 md:top-6">
@@ -216,7 +233,8 @@ export function CityExperience() {
         <ul className="mt-3 space-y-2 text-[11px] text-slate-400">
           <li><LegendMark color="#5ee0ff" />Height — observed WatchEvents</li>
           <li><LegendMark color="#a78bfa" />Footprint — stars and forks</li>
-          <li><LegendMark color="#e8fbff" />Beacon — tracked repository</li>
+          <li><LegendMark color="#e8fbff" />Windows — commits in latest 30d</li>
+          <li><LegendMark color="#39465c" />Neutral windows — data unavailable</li>
           <li><LegendMark color="#334155" />Platform — broad AI district</li>
         </ul>
         <p className="mt-3 border-t border-white/8 pt-3 text-[10px] leading-4 text-slate-500">
@@ -244,32 +262,44 @@ export function CityExperience() {
       <section className="glass-panel absolute bottom-4 right-4 z-10 hidden w-72 p-4 md:block md:bottom-6 md:right-6">
         <div className="flex items-center justify-between gap-3">
           <p className="eyebrow text-slate-400">DATA COVERAGE</p>
-          <span className={snapshot.source.coverage_complete ? "coverage-good" : "coverage-partial"}>
-            {snapshot.source.coverage_complete ? "COMPLETE" : "PARTIAL"}
+          <span className={archiveCoverageComplete ? "coverage-good" : "coverage-partial"}>
+            {archiveCoverageComplete ? "ARCHIVE COMPLETE" : "ARCHIVE PARTIAL"}
           </span>
         </div>
         <p className="mt-3 text-[11px] leading-5 text-slate-400">
           {formatDate(snapshot.window.from)} → {formatDate(snapshot.window.to)} · {snapshot.methodology.builder}
         </p>
-        {!snapshot.source.lifecycle_coverage_complete && (
-          <p className="mt-2 text-[10px] leading-4 text-amber-200/70">
-            Lifecycle transitions are withheld because this canary covers one day, not a complete ISO week.
-          </p>
+        <p className="mt-2 text-[10px] leading-4 text-slate-500">
+          GitHub metadata: {metadataCoverageComplete ? "complete" : "partial"}
+          {snapshot.source.metadata_collected_at
+            ? ` · current as collected ${formatDate(snapshot.source.metadata_collected_at)}`
+            : ""}
+        </p>
+        {performanceMetrics && (
+          <dl className="mt-3 grid grid-cols-4 gap-2 border-t border-white/8 pt-3">
+            <Stat value={performanceMetrics.loadedBuildings} label="loaded" />
+            <Stat value={performanceMetrics.visibleBuildings} label="visible" />
+            <Stat value={performanceMetrics.framesPerSecond} label="fps" />
+            <Stat value={performanceMetrics.drawCalls} label="draws" />
+          </dl>
         )}
       </section>
 
       {hover && (
         <div
-          className="glass-panel pointer-events-none fixed z-30 w-72 p-4"
+          className="glass-panel pointer-events-none fixed z-30 w-[340px] max-w-[calc(100vw-24px)] p-4"
           style={{
-            left: Math.min(hover.clientX + 18, window.innerWidth - 304),
-            top: Math.min(hover.clientY + 18, window.innerHeight - 245),
+            left: Math.max(12, Math.min(hover.clientX + 18, window.innerWidth - 352)),
+            top: Math.max(12, Math.min(hover.clientY + 18, window.innerHeight - 390)),
           }}
         >
           <p className="eyebrow" style={{ color: snapshot.districts.find((district) => district.id === hover.repository.district_id)?.color }}>
             {hover.repository.district_id} / {hover.repository.community_id}
           </p>
           <p className="mt-2 truncate text-sm font-semibold">{hover.repository.full_name}</p>
+          <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-300">
+            {hover.repository.description ?? "No GitHub description available."}
+          </p>
           <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/8 pt-3">
             <Stat value={`+${hover.repository.watch_events_window}`} label="watches" />
             <Stat value={compactNumber(hover.repository.stars)} label="stars" />
@@ -278,11 +308,25 @@ export function CityExperience() {
           <p className="mt-3 line-clamp-2 text-[10px] leading-4 text-slate-500">
             {hover.repository.keywords.slice(0, 7).join(" · ")}
           </p>
+          <div className="mt-3 border-t border-white/8 pt-3">
+            <p className="eyebrow text-cyan-200">
+              {hover.repository.detection_explanation?.label ?? "Why Gitropolis noticed it"}
+            </p>
+            <p className="mt-1 line-clamp-3 text-[10px] leading-4 text-slate-400">
+              {hover.repository.detection_explanation?.summary ??
+                `Observed ${hover.repository.watch_events_window} WatchEvents in this UTC window.`}
+            </p>
+            <p className="mt-2 text-[10px] text-slate-500">
+              {hover.repository.commits_30d === null
+                ? "Activity data unavailable"
+                : `${compactNumber(hover.repository.commits_30d)} commits in latest 30d`}
+            </p>
+          </div>
         </div>
       )}
 
       {selected && (
-        <section className="glass-panel absolute bottom-24 left-4 z-20 w-[min(360px,calc(100vw-32px))] p-4 md:bottom-auto md:left-auto md:right-6 md:top-[calc(100dvh-218px)] md:w-72">
+        <section className="glass-panel absolute bottom-24 left-4 z-20 w-[min(380px,calc(100vw-32px))] p-4 md:bottom-6 md:left-auto md:right-[318px] md:w-80">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="eyebrow" style={{ color: selectedDistrict?.color }}>
@@ -298,6 +342,18 @@ export function CityExperience() {
             >
               ×
             </button>
+          </div>
+          <p className="mt-3 text-[11px] leading-5 text-slate-300">
+            {selected.description ?? "No GitHub description available."}
+          </p>
+          <div className="mt-3 border-t border-white/8 pt-3">
+            <p className="eyebrow text-cyan-200">
+              {selected.detection_explanation?.label ?? "Why Gitropolis noticed it"}
+            </p>
+            <p className="mt-1 text-[10px] leading-4 text-slate-400">
+              {selected.detection_explanation?.summary ??
+                `Observed ${selected.watch_events_window} WatchEvents in this UTC window.`}
+            </p>
           </div>
           <a className="ghost-link mt-3 inline-flex" href={selected.url} target="_blank" rel="noreferrer">
             OPEN ON GITHUB ↗

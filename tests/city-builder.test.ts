@@ -19,13 +19,17 @@ import type { TopicAnalysisSnapshot } from "../src/types/topic-analysis.js";
 const FROM = "2026-07-27T00:00:00.000Z";
 const TO = "2026-08-03T00:00:00.000Z";
 
-function currentRepository(id: number, fullName: string): RepositorySnapshot {
+function currentRepository(
+  id: number,
+  fullName: string,
+  description: string | null = null,
+): RepositorySnapshot {
   return {
     id,
     node_id: `node-${id}`,
     full_name: fullName,
     html_url: `https://github.com/${fullName}`,
-    description: null,
+    description,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: TO,
     pushed_at: TO,
@@ -64,7 +68,11 @@ function activityRepository(
     observed_watch_velocity_per_day: watchEvents / 7,
     first_seen_at: FROM,
     last_seen_at: "2026-08-02T00:00:00Z",
-    daily: [],
+    daily: Array.from({ length: 7 }, (_, day) => ({
+      date: new Date(Date.UTC(2026, 6, 27 + day)).toISOString().slice(0, 10),
+      watch_events_observed: day < Math.min(watchEvents, 7) ? Math.max(1, watchEvents - day) : 0,
+      coverage_complete: true,
+    })),
     metadata_selected: true,
     current: hasMetadata ? currentRepository(id, fullName) : null,
   };
@@ -273,6 +281,13 @@ test("builds renderer data with stable-ID rename joins and frontier fallback", (
   assert.equal(city.repositories.length, 2);
   assert.equal(city.source.ai_related_repositories, 3);
   assert.equal(city.source.excluded_missing_metadata, 1);
+  assert.equal(city.source.archive_coverage_complete, true);
+  assert.equal(city.source.metadata_coverage_complete, true);
+  assert.equal(city.source.metadata_collected_at, "2026-08-03T01:00:00.000Z");
+  assert.equal(
+    city.source.metadata_selection_rule,
+    "at least 3 WatchEvents across the full window",
+  );
   assert.deepEqual(city.display.top_n_options, [5, 10, 25, 50, 100]);
 
   const renamed = city.repositories[0];
@@ -282,6 +297,14 @@ test("builds renderer data with stable-ID rename joins and frontier fallback", (
   assert.equal(renamed?.radar_status, "active");
   assert.equal(renamed?.weekly_watch_events, 12);
   assert.deepEqual(renamed?.flags, ["breakout"]);
+  assert.equal(
+    renamed?.detection_explanation?.label,
+    "Why Gitropolis noticed it",
+  );
+  assert.equal(renamed?.detection_explanation?.signals.window_watch_events, 12);
+  assert.equal(renamed?.detection_explanation?.signals.max_daily_watch_events, 12);
+  assert.equal(renamed?.detection_explanation?.signals.active_days, 7);
+  assert.doesNotMatch(renamed?.detection_explanation?.summary ?? "", /became popular/i);
 
   const frontier = city.repositories[1];
   assert.equal(frontier?.district_id, "frontier");
@@ -290,6 +313,37 @@ test("builds renderer data with stable-ID rename joins and frontier fallback", (
   assert.equal(
     city.communities.find(({ id }) => id === "graph-rag")?.status,
     "unknown",
+  );
+});
+
+test("copies current GitHub descriptions without inventing a fallback value", () => {
+  const withDescription = activityRepository(1, "owner/described", 8);
+  withDescription.current = currentRepository(
+    1,
+    "owner/described",
+    "A current GitHub repository description.",
+  );
+  const withoutDescription = activityRepository(2, "owner/undescribed", 7);
+
+  const city = buildCitySnapshot({
+    activity: activitySnapshot([withDescription, withoutDescription]),
+    analysis: analysisSnapshot(
+      [
+        analysisRepository(1, "owner/described", "agent-tools"),
+        analysisRepository(2, "owner/undescribed", "agent-tools"),
+      ],
+      { "agent-tools": 2 },
+    ),
+    lifecycle: lifecycleSnapshot([]),
+  });
+
+  assert.equal(
+    city.repositories.find(({ repository_id }) => repository_id === 1)?.description,
+    "A current GitHub repository description.",
+  );
+  assert.equal(
+    city.repositories.find(({ repository_id }) => repository_id === 2)?.description,
+    null,
   );
 });
 

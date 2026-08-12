@@ -16,6 +16,9 @@ export default function RepositoryListPage() {
   const repositories = snapshot.repositories.toSorted(
     (left, right) => left.global_rank - right.global_rank,
   );
+  const archiveCoverageComplete =
+    snapshot.source.archive_coverage_complete ??
+    snapshot.source.activity_coverage_complete;
 
   return (
     <main className="min-h-screen bg-[#030610] px-5 py-8 text-slate-100 md:px-10 md:py-12">
@@ -46,9 +49,9 @@ export default function RepositoryListPage() {
           />
         </section>
 
-        {!snapshot.source.lifecycle_coverage_complete && (
+        {!archiveCoverageComplete && (
           <aside className="mt-6 rounded-xl border border-amber-300/15 bg-amber-300/5 px-4 py-3 text-xs leading-5 text-amber-100/70">
-            Lifecycle transitions are not evaluated in this one-day canary. Activity and analysis coverage are complete; the weekly lifecycle window is intentionally partial.
+            This snapshot has incomplete GH Archive coverage. Detection signals must not be read as a complete weekly comparison.
           </aside>
         )}
 
@@ -87,6 +90,21 @@ export default function RepositoryListPage() {
                   </a>
                   <p className="mt-2 line-clamp-1 text-[10px] text-slate-500">
                     {repository.keywords.slice(0, 8).join(" · ")}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    {repository.description ?? "No GitHub description available."}
+                  </p>
+                  <p className="mt-2 text-[10px] leading-4 text-cyan-100/65">
+                    <span className="font-semibold">
+                      {repository.detection_explanation?.label ?? "Why Gitropolis noticed it"}:
+                    </span>{" "}
+                    {repository.detection_explanation?.summary ??
+                      `Observed ${repository.watch_events_window} WatchEvents in this UTC window.`}
+                  </p>
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    {repository.commits_30d === null
+                      ? "Activity data unavailable"
+                      : `${compactNumber(repository.commits_30d)} commits in latest 30d`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-400">
