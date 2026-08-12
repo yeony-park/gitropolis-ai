@@ -274,9 +274,30 @@ node dist/cli.js analyze \
   --input .gitropolis/candidates/FROM_TO.json
 ```
 
-The command uses the collected description and topics, fetches only the README
-content needed for analysis, and writes `topic-analysis-v1` under
-`.gitropolis/observations/`. Raw README content is not stored in the output.
+This default path uses the deterministic rules classifier. An explicit model
+adapter can instead classify every accessible candidate in bounded batches:
+
+```bash
+node dist/cli.js analyze \
+  --input .gitropolis/candidates/FROM_TO.json \
+  --model-command /absolute/path/to/json-stdio-adapter \
+  --model-provider PROVIDER_ID \
+  --model MODEL_ID
+```
+
+The adapter receives a single JSON request on standard input and returns one
+strict JSON response on standard output. Only the stable repository ID,
+description, and topics are sent; README content is never sent to the model.
+Successful `ai-related` and `review` decisions are enriched with README keyword
+observations afterward. Raw README content is not stored in the cache or output.
+
+Model decisions default to a metadata-hash cache under
+`.gitropolis/cache/ai-relevance-v1.json`. Use `--model-cache`,
+`--model-batch-size`, `--model-invocation-budget`, and `--model-max-retries` to
+control the run. A retry consumes the invocation budget, successful partial
+responses are saved immediately, and a later run resumes only unresolved or
+changed repositories. Gitropolis does not bundle or select a model provider;
+the adapter owns provider authentication and cost.
 
 Join an enriched activity snapshot, its topic analysis, and a lifecycle that
 covers the same window into the first renderer-ready city dataset:

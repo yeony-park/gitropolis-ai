@@ -116,7 +116,18 @@ export default function RepositoryListPage() {
                 </div>
                 <Metric value={`+${repository.watch_events_window}`} label="watches" />
                 <Metric value={compactNumber(repository.stars)} label="stars" />
-                <Metric value={`${Math.round(repository.ai_relevance * 100)}%`} label="rule score" />
+                <Metric
+                  value={
+                    snapshot.source.model_classification
+                      ? "AI-related"
+                      : `${Math.round(repository.ai_relevance * 100)}%`
+                  }
+                  label={
+                    snapshot.source.model_classification
+                      ? "model decision"
+                      : "rule score"
+                  }
+                />
               </article>
             );
           })}

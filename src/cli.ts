@@ -26,6 +26,16 @@ import { buildCitySnapshot } from "./city-builder.js";
 import { defaultCityPath, writeCitySnapshot } from "./city-file.js";
 import { GHArchiveClient } from "./gh-archive/client.js";
 import { GitHubClient } from "./github/client.js";
+import {
+  MODEL_CLASSIFICATION_METHODOLOGY_VERSION,
+  MODEL_CLASSIFICATION_PROMPT_VERSION,
+  createCachedModelAIClassifier,
+} from "./model-classification.js";
+import {
+  FileModelClassificationCache,
+  defaultModelClassificationCachePath,
+} from "./model-classification-file.js";
+import { CommandModelProvider } from "./model-command-provider.js";
 import { redactSecrets } from "./security/redact.js";
 import {
   defaultRepositoryLifecyclePath,
@@ -79,9 +89,19 @@ Options:
   --analysis PATH             Read a topic-analysis-v1 snapshot
   --lifecycle PATH            Read a repository-lifecycle-v1 snapshot
   --max-readme-characters N   Maximum README prefix to analyze (default: 12000)
+  --model-command PATH        Opt in to a JSON-stdio model adapter executable
+  --model-provider ID         Model provider identity (required with command)
+  --model ID                  Model identity (required with command)
+  --model-cache PATH          Model decision cache path
+  --model-batch-size N        Repositories per model invocation (default: 25)
+  --model-invocation-budget N Maximum model invocations (default: 10)
+  --model-max-retries N       Retries per unresolved model batch (default: 1)
   --output PATH               Write output to a specific path
   -h, --help                  Show this help message
 `;
+
+const SECRET_ENVIRONMENT_NAME =
+  /(?:token|secret|password|api[_-]?key|access[_-]?key|private[_-]?key)/iu;
 
 export async function run(
   arguments_: readonly string[] = process.argv.slice(2),
@@ -296,10 +316,44 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     const options = parseAnalysisArguments(commandArguments);
     const input = await readAnalysisInput(options.input);
     const githubClient = new GitHubClient({ token: process.env.GITHUB_TOKEN });
+    const modelOptions = options.modelClassification;
+    const modelSecrets = modelOptions
+      ? modelSecretValues(process.env)
+      : [];
+    const classifier = modelOptions
+      ? createCachedModelAIClassifier({
+          provider: new CommandModelProvider({
+            command: modelOptions.command,
+          }),
+          cache: new FileModelClassificationCache(
+            modelOptions.cachePath ??
+              defaultModelClassificationCachePath(
+                options.directory ?? process.cwd(),
+              ),
+          ),
+          identity: {
+            provider: modelOptions.provider,
+            model: modelOptions.model,
+            promptVersion: MODEL_CLASSIFICATION_PROMPT_VERSION,
+            methodologyVersion:
+              MODEL_CLASSIFICATION_METHODOLOGY_VERSION,
+          },
+          batchSize: modelOptions.batchSize,
+          invocationBudget: modelOptions.invocationBudget,
+          maxRetries: modelOptions.maxRetries,
+          secrets: modelSecrets,
+        })
+      : undefined;
+    if (modelOptions) {
+      process.stdout.write(
+        `Model classification opt-in: ${modelOptions.provider}/${modelOptions.model}. Transmitting repository ID, description, and topics; README content is not sent.\n`,
+      );
+    }
     const snapshot = await analyzeCandidates(
       input.candidate,
       githubReadmeSource(githubClient),
       {
+        ...(classifier ? { classifier } : {}),
         inputSchemaVersion: input.inputSchemaVersion,
         maxReadmeCharacters: options.maxReadmeCharacters,
       },
@@ -326,6 +380,12 @@ async function runCommand(arguments_: readonly string[]): Promise<number> {
     process.stdout.write(
       `Keyword census: ${snapshot.keyword_census.unique_keywords} unique keywords, ${snapshot.keyword_census.observation_records} source observations across ${snapshot.keyword_census.repositories_with_observations}/${snapshot.keyword_census.repositories_analyzed} repositories\n`,
     );
+    const model = snapshot.source.model_classification;
+    if (model) {
+      process.stdout.write(
+        `Model classification: ${model.cache_hits} cache hits, ${model.provider_decisions} provider decisions, ${model.invocations} invocations, ${model.failed} failed, ${model.budget_exhausted} budget-exhausted\n`,
+      );
+    }
     process.stdout.write(`Topic analysis: ${writtenPath}\n`);
     return 0;
   }
@@ -534,6 +594,15 @@ export interface AnalysisCliOptions {
   input: string;
   output?: string;
   maxReadmeCharacters: number;
+  modelClassification?: {
+    command: string;
+    provider: string;
+    model: string;
+    cachePath?: string;
+    batchSize: number;
+    invocationBudget: number;
+    maxRetries: number;
+  };
 }
 
 export interface CityCliOptions {
@@ -665,6 +734,13 @@ export function parseAnalysisArguments(
     "--input",
     "--output",
     "--max-readme-characters",
+    "--model-command",
+    "--model-provider",
+    "--model",
+    "--model-cache",
+    "--model-batch-size",
+    "--model-invocation-budget",
+    "--model-max-retries",
   ]);
 
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -695,6 +771,67 @@ export function parseAnalysisArguments(
     );
   }
 
+  const modelOptionNames = [
+    "--model-command",
+    "--model-provider",
+    "--model",
+    "--model-cache",
+    "--model-batch-size",
+    "--model-invocation-budget",
+    "--model-max-retries",
+  ] as const;
+  const hasModelOptions = modelOptionNames.some(
+    (name) => values[name] !== undefined,
+  );
+  let modelClassification: AnalysisCliOptions["modelClassification"];
+  if (hasModelOptions) {
+    const command = values["--model-command"];
+    const provider = values["--model-provider"];
+    const model = values["--model"];
+    if (!command || !provider || !model) {
+      throw new Error(
+        "Model analysis requires --model-command, --model-provider, and --model.",
+      );
+    }
+    const batchSize = integerOption(
+      values["--model-batch-size"],
+      "--model-batch-size",
+      25,
+    );
+    const invocationBudget = integerOption(
+      values["--model-invocation-budget"],
+      "--model-invocation-budget",
+      10,
+    );
+    const maxRetries = integerOption(
+      values["--model-max-retries"],
+      "--model-max-retries",
+      1,
+    );
+    if (batchSize < 1 || batchSize > 100) {
+      throw new Error("--model-batch-size must be between 1 and 100.");
+    }
+    if (invocationBudget < 0 || invocationBudget > 10_000) {
+      throw new Error(
+        "--model-invocation-budget must be between 0 and 10000.",
+      );
+    }
+    if (maxRetries < 0 || maxRetries > 2) {
+      throw new Error("--model-max-retries must be between 0 and 2.");
+    }
+    modelClassification = {
+      command,
+      provider: boundedIdentityOption(provider, "--model-provider"),
+      model: boundedIdentityOption(model, "--model"),
+      ...(values["--model-cache"]
+        ? { cachePath: values["--model-cache"] }
+        : {}),
+      batchSize,
+      invocationBudget,
+      maxRetries,
+    };
+  }
+
   return {
     ...(values["--directory"]
       ? { directory: values["--directory"] }
@@ -702,6 +839,7 @@ export function parseAnalysisArguments(
     input,
     ...(values["--output"] ? { output: values["--output"] } : {}),
     maxReadmeCharacters,
+    ...(modelClassification ? { modelClassification } : {}),
   };
 }
 
@@ -882,6 +1020,26 @@ function positiveIntegerOption(
     throw new Error(`${name} must be a positive integer.`);
   }
   return parsed;
+}
+
+function boundedIdentityOption(value: string, name: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 200) {
+    throw new Error(`${name} must contain between 1 and 200 characters.`);
+  }
+  return normalized;
+}
+
+function modelSecretValues(
+  environment: NodeJS.ProcessEnv,
+): string[] {
+  return [
+    ...new Set(
+      Object.entries(environment).flatMap(([name, value]) =>
+        SECRET_ENVIRONMENT_NAME.test(name) && value ? [value] : [],
+      ),
+    ),
+  ];
 }
 
 function formatActivitySelection(

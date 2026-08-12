@@ -323,11 +323,11 @@ the same ordered inputs and thresholds produce the same JSON values.
 ## AI relevance and keyword observation
 
 The `analyze` command reads an existing `candidate-v1` or enriched
-`activity-series-v1` snapshot. It reuses the
-collected repository description and topics and requests README content only
-when README metadata is present. By default, at most the first 12,000 README
-characters are processed. Raw README content is never written to the analysis
-output.
+`activity-series-v1` snapshot. The deterministic rules classifier remains the
+default. It reuses the collected repository description and topics and requests
+README content only when README metadata is present. By default, at most the
+first 12,000 README characters are processed. Raw README content is never
+written to the analysis output.
 
 The initial `ai-relevance-rules-v1` methodology is deterministic and
 explainable. It normalizes aliases and hyphenation, observes GitHub topics, and
@@ -344,9 +344,80 @@ keyword's repository count, occurrence count, and sources. This prevents the
 provisional rule classifier from silently discarding possible emerging terms.
 
 The classifier boundary is provider-neutral and identifies the classifier kind
-and methodology version in the output. The rule implementation is the current
-default; a live model provider, model, budget, and data policy have not yet been
-selected.
+and methodology version in the output. Model classification is an explicit
+opt-in through a JSON-over-stdio executable plus declared provider and model
+identities. Gitropolis does not bundle a provider SDK, provider credentials, or
+a selected model.
+
+The model pass classifies every candidate with current GitHub metadata, not only
+the candidates that rules place in `review`. Each request contains exactly the
+stable numeric `repository_id`, normalized `description`, and normalized
+`topics`. Repository names, stars, forks, README content, credentials, and user
+data are not transmitted by Gitropolis. The adapter must return exactly one
+strict structured decision per requested ID: `ai-related`, `review`, or
+`not-ai`, plus a concise evidence string. Unexpected IDs, duplicate IDs,
+missing decisions, unknown decisions, and malformed items are rejected for the
+affected batch or item.
+
+The command adapter protocol is one request and one response per process:
+
+```json
+{
+  "schema_version": "ai-relevance-batch-request-v1",
+  "task": {
+    "prompt_version": "ai-relevance-prompt-v1",
+    "instructions": "..."
+  },
+  "classifier": {
+    "provider": "provider-id",
+    "model": "model-id",
+    "methodology_version": "ai-relevance-model-v1"
+  },
+  "repositories": [
+    {
+      "repository_id": 123,
+      "description": "Repository description",
+      "topics": ["machine-learning"]
+    }
+  ]
+}
+```
+
+```json
+{
+  "schema_version": "ai-relevance-batch-response-v1",
+  "repositories": [
+    {
+      "repository_id": 123,
+      "decision": "ai-related",
+      "evidence": "The metadata identifies a machine-learning project."
+    }
+  ]
+}
+```
+
+Model calls are bounded by batch size, invocation budget, and retry count. A
+retry consumes the same invocation budget as an initial request. Valid siblings
+from a partial response are saved immediately and only unresolved IDs are
+retried. Provider failures, invalid responses, and budget exhaustion never fall
+back to a rules decision: the repository is preserved as `unavailable` with a
+typed model coverage error. This keeps model provenance and coverage honest.
+
+Successful model decisions are cached locally by stable repository ID,
+normalized metadata hash, provider, model, prompt version, and methodology
+version. An unchanged cache hit makes no model call; changing any classified
+metadata or classifier identity invalidates only that repository. The cache
+stores the key material, decision, and concise redacted evidence, but not raw
+description, topics, README content, command paths, errors, credentials, or
+timestamps. A malformed cache fails closed before a model call and is not
+silently overwritten.
+
+README enrichment happens only after model classification. Gitropolis requests
+README content for successful `ai-related` and `review` decisions to build
+keyword observations, but never forwards that content to the model. Model
+`not-ai`, failed, and budget-exhausted decisions skip the README request. The
+model output filename includes an identity fingerprint so a model analysis does
+not overwrite the rules analysis for the same window.
 
 Each keyword observation contains:
 
@@ -362,6 +433,10 @@ description, or `0.30` from README text, with per-source caps of `0.80`, `0.60`,
 and `0.45`. A total score of at least `0.50` is `ai-related`, a score from
 `0.25` up to but excluding `0.50` is `review`, and a lower score is `not-ai`.
 These are provisional MVP rules, not a measured precision claim.
+
+For schema compatibility, successful model decisions map to ordinal values
+`1`, `0.5`, and `0` for `ai-related`, `review`, and `not-ai`. These values encode
+decision classes and are not model probabilities or calibrated confidence.
 
 An AI-related repository is placed in the `unknown` pool unless a non-broad
 keyword is observed in at least five distinct AI-related repositories in the
@@ -388,6 +463,12 @@ Each topic analysis snapshot contains:
 - time-stamped `KeywordObservation` records;
 - an all-repository keyword census and classifier kind.
 
+Model snapshots additionally record provider, model, prompt and methodology
+identity; transmitted field names; cache hits; provider decisions; invocation,
+failure, and budget-exhaustion counts; completeness; and concise per-repository
+model evidence. `city-v1` preserves the model identity when it consumes such a
+snapshot.
+
 An authenticated end-to-end check analyzed the three leading repositories from
 the 2026-07-30 GH Archive experiment with complete README coverage. Two were
 classified `ai-related`, while one remained in `review`; no repeated specific
@@ -396,8 +477,11 @@ keyword existed in the three-repository sample, so no repository was marked
 remained incomplete because the input candidate snapshot contained malformed GH
 Archive records. Network-free tests separately verify `graph-rag` repeated
 across five repositories and a single-repository `agentic-rag` observation.
-This check establishes technical feasibility only and is not a representative
-accuracy benchmark.
+Model tests verify strict parsing, all-candidate coverage, metadata-selective
+cache invalidation, partial-result resume, bounded budgets, corrupt-cache
+failure, JSON-stdio transport, credential and README non-retention, and the
+unchanged rules default. These checks establish technical feasibility only and
+are not a representative model accuracy benchmark.
 
 ## Renderer-ready city data
 

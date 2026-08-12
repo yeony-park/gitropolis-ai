@@ -316,6 +316,54 @@ test("builds renderer data with stable-ID rename joins and frontier fallback", (
   );
 });
 
+test("preserves model classifier identity without changing rules source output", () => {
+  const activity = activitySnapshot([
+    activityRepository(1, "owner/repository", 5),
+  ]);
+  const rulesAnalysis = analysisSnapshot(
+    [analysisRepository(1, "owner/repository", "agent-tools")],
+    { "agent-tools": 1 },
+  );
+  const lifecycle = lifecycleSnapshot([]);
+
+  const rulesCity = buildCitySnapshot({
+    activity,
+    analysis: rulesAnalysis,
+    lifecycle,
+  });
+  assert.equal("model_classification" in rulesCity.source, false);
+
+  const modelAnalysis = structuredClone(rulesAnalysis);
+  modelAnalysis.methodology_version = "ai-relevance-model-v1";
+  modelAnalysis.source.classifier_kind = "model";
+  modelAnalysis.source.model_classification = {
+    provider: "test-provider",
+    model: "test-model",
+    prompt_version: "ai-relevance-prompt-v1",
+    methodology_version: "ai-relevance-model-v1",
+    transmitted_fields: ["repository_id", "description", "topics"],
+    eligible: 1,
+    cache_hits: 0,
+    provider_decisions: 1,
+    invocations: 1,
+    failed: 0,
+    budget_exhausted: 0,
+    complete: true,
+  };
+
+  const modelCity = buildCitySnapshot({
+    activity,
+    analysis: modelAnalysis,
+    lifecycle,
+  });
+  assert.deepEqual(modelCity.source.model_classification, {
+    provider: "test-provider",
+    model: "test-model",
+    prompt_version: "ai-relevance-prompt-v1",
+    methodology_version: "ai-relevance-model-v1",
+  });
+});
+
 test("copies current GitHub descriptions without inventing a fallback value", () => {
   const withDescription = activityRepository(1, "owner/described", 8);
   withDescription.current = currentRepository(

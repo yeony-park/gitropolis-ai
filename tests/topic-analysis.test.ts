@@ -4,10 +4,10 @@ import { test } from "node:test";
 import {
   analyzeCandidates,
   githubReadmeSource,
-  type AIRelevanceClassifier,
   type RepositoryReadmeSource,
 } from "../src/topic-analysis.js";
 import { GitHubApiError, GitHubClient } from "../src/github/client.js";
+import type { BatchModelAIClassifier } from "../src/model-classification.js";
 import type {
   CandidateRepository,
   CandidateSnapshot,
@@ -391,17 +391,45 @@ test("keyword normalization treats object prototype names as strings", async () 
   );
 });
 
-test("analysis accepts a provider-neutral model classifier", async () => {
-  const classifier: AIRelevanceClassifier = {
+test("analysis accepts a provider-neutral batch model classifier", async () => {
+  const classifier: BatchModelAIClassifier = {
     kind: "model",
     version: "test-model-v1",
-    async classify(input) {
-      assert.equal(input.fullName, "owner/repository");
-      assert.equal(input.readme, "Calendar automation README");
+    identity: {
+      provider: "test-provider",
+      model: "test-model",
+      promptVersion: "test-prompt-v1",
+      methodologyVersion: "test-model-v1",
+    },
+    async classifyAll(inputs) {
+      assert.deepEqual(inputs, [
+        {
+          repositoryId: 1,
+          description: "A calendar automation tool.",
+          topics: [],
+        },
+      ]);
       return {
-        score: 0.9,
-        decision: "ai-related",
-        evidence: [],
+        outcomes: [
+          {
+            kind: "success",
+            source: "provider",
+            repositoryId: 1,
+            decision: "ai-related",
+            evidence: "Uses AI to automate calendar workflows.",
+          },
+        ],
+        stats: {
+          identity: this.identity,
+          transmittedFields: ["repository_id", "description", "topics"],
+          eligible: 1,
+          cacheHits: 0,
+          providerDecisions: 1,
+          invocations: 1,
+          failed: 0,
+          budgetExhausted: 0,
+          complete: true,
+        },
       };
     },
   };
@@ -421,7 +449,334 @@ test("analysis accepts a provider-neutral model classifier", async () => {
   assert.equal(snapshot.methodology_version, "test-model-v1");
   assert.equal(snapshot.repositories[0]?.ai_relevance.decision, "ai-related");
   assert.equal(
+    snapshot.repositories[0]?.ai_relevance.model_evidence,
+    "Uses AI to automate calendar workflows.",
+  );
+  assert.equal(
     JSON.stringify(snapshot).includes("Calendar automation README"),
     false,
   );
+});
+
+test("model analysis classifies every accessible rule bucket before selective README enrichment", async () => {
+  const candidate = candidateSnapshot([
+    candidateRepository("owner/rules-related", 1, {
+      topics: ["machine-learning"],
+    }),
+    candidateRepository("owner/rules-review", 2, {
+      description: "A transformer implementation.",
+    }),
+    candidateRepository("owner/rules-not-ai", 3, {
+      description: "A calendar and task manager for small teams.",
+    }),
+  ]);
+  candidate.repositories.push({
+    full_name: "owner/unavailable",
+    watch_events: 5,
+    first_seen_at: "2026-08-01T00:00:00Z",
+    last_seen_at: "2026-08-01T01:00:00Z",
+    github: null,
+  });
+  const readmeValues = {
+    "owner/rules-related": "RELATED_README_CANARY_7291 Graph RAG",
+    "owner/rules-review": "REVIEW_README_CANARY_7291",
+    "owner/rules-not-ai": "NOT_AI_README_CANARY_7291",
+  };
+  const rules = await analyzeCandidates(candidate, stubReadmes(readmeValues), {
+    observedAt,
+  });
+  assert.deepEqual(
+    rules.repositories.map(({ ai_relevance: relevance }) => relevance.decision),
+    ["ai-related", "review", "not-ai", "unavailable"],
+  );
+
+  const classifiedInputs: unknown[] = [];
+  const classifier: BatchModelAIClassifier = {
+    kind: "model",
+    version: "test-model-v1",
+    identity: {
+      provider: "test-provider",
+      model: "test-model",
+      promptVersion: "test-prompt-v1",
+      methodologyVersion: "test-model-v1",
+    },
+    async classifyAll(inputs) {
+      classifiedInputs.push(...inputs);
+      return {
+        outcomes: [
+          {
+            kind: "success",
+            source: "provider",
+            repositoryId: 1,
+            decision: "ai-related",
+            evidence: "The metadata describes a machine-learning project.",
+          },
+          {
+            kind: "success",
+            source: "provider",
+            repositoryId: 2,
+            decision: "review",
+            evidence: "The transformer reference is insufficiently specific.",
+          },
+          {
+            kind: "success",
+            source: "provider",
+            repositoryId: 3,
+            decision: "not-ai",
+            evidence: "The metadata describes ordinary productivity software.",
+          },
+        ],
+        stats: {
+          identity: this.identity,
+          transmittedFields: ["repository_id", "description", "topics"],
+          eligible: 3,
+          cacheHits: 0,
+          providerDecisions: 3,
+          invocations: 1,
+          failed: 0,
+          budgetExhausted: 0,
+          complete: true,
+        },
+      };
+    },
+  };
+  const readmeRequests: string[] = [];
+  const readmes: RepositoryReadmeSource = {
+    authenticated: false,
+    async getReadme(repository): Promise<string | null> {
+      readmeRequests.push(repository);
+      return readmeValues[repository as keyof typeof readmeValues] ?? null;
+    },
+  };
+
+  const snapshot = await analyzeCandidates(candidate, readmes, {
+    classifier,
+    observedAt,
+  });
+
+  assert.deepEqual(classifiedInputs, [
+    {
+      repositoryId: 1,
+      description: null,
+      topics: ["machine-learning"],
+    },
+    {
+      repositoryId: 2,
+      description: "A transformer implementation.",
+      topics: [],
+    },
+    {
+      repositoryId: 3,
+      description: "A calendar and task manager for small teams.",
+      topics: [],
+    },
+  ]);
+  assert.deepEqual(readmeRequests, [
+    "owner/rules-related",
+    "owner/rules-review",
+  ]);
+  assert.deepEqual(
+    snapshot.repositories.map(({ ai_relevance: relevance }) =>
+      relevance.decision,
+    ),
+    ["ai-related", "review", "not-ai", "unavailable"],
+  );
+  assert.deepEqual(snapshot.source.model_classification, {
+    provider: "test-provider",
+    model: "test-model",
+    prompt_version: "test-prompt-v1",
+    methodology_version: "test-model-v1",
+    transmitted_fields: ["repository_id", "description", "topics"],
+    eligible: 3,
+    cache_hits: 0,
+    provider_decisions: 3,
+    invocations: 1,
+    failed: 0,
+    budget_exhausted: 0,
+    complete: true,
+  });
+  assert.equal(
+    snapshot.repositories[0]?.observations.some(
+      ({ source }) => source === "readme",
+    ),
+    true,
+  );
+  assert.equal(
+    snapshot.repositories[1]?.observations.some(
+      ({ source }) => source === "readme",
+    ),
+    false,
+  );
+  assert.equal(
+    snapshot.repositories[2]?.observations.some(
+      ({ source }) => source === "readme",
+    ),
+    false,
+  );
+  const serialized = JSON.stringify(snapshot);
+  assert.equal(serialized.includes("RELATED_README_CANARY_7291"), false);
+  assert.equal(serialized.includes("REVIEW_README_CANARY_7291"), false);
+  assert.equal(serialized.includes("NOT_AI_README_CANARY_7291"), false);
+});
+
+test("model analysis reuses one outcome for duplicate stable repository IDs", async () => {
+  const candidate = candidateSnapshot([
+    candidateRepository("owner/before-rename", 1, {
+      description: "An AI project.",
+    }),
+    candidateRepository("owner/after-rename", 1, {
+      description: "An AI project.",
+    }),
+  ]);
+  let inputsSeen = 0;
+  const classifier: BatchModelAIClassifier = {
+    kind: "model",
+    version: "test-model-v1",
+    identity: {
+      provider: "test-provider",
+      model: "test-model",
+      promptVersion: "test-prompt-v1",
+      methodologyVersion: "test-model-v1",
+    },
+    async classifyAll(inputs) {
+      inputsSeen = inputs.length;
+      return {
+        outcomes: [{
+          kind: "success",
+          source: "provider",
+          repositoryId: 1,
+          decision: "not-ai",
+          evidence: "The metadata is not primarily AI-related.",
+        }],
+        stats: {
+          identity: this.identity,
+          transmittedFields: ["repository_id", "description", "topics"],
+          eligible: 1,
+          cacheHits: 0,
+          providerDecisions: 1,
+          invocations: 1,
+          failed: 0,
+          budgetExhausted: 0,
+          complete: true,
+        },
+      };
+    },
+  };
+
+  const snapshot = await analyzeCandidates(candidate, stubReadmes({}), {
+    classifier,
+    observedAt,
+  });
+
+  assert.equal(inputsSeen, 1);
+  assert.deepEqual(
+    snapshot.repositories.map(({ ai_relevance }) => ai_relevance.decision),
+    ["not-ai", "not-ai"],
+  );
+});
+
+test("model analysis rejects contradictory provider provenance", async () => {
+  const candidate = candidateSnapshot([
+    candidateRepository("owner/repository", 1),
+  ]);
+  const classifier: BatchModelAIClassifier = {
+    kind: "model",
+    version: "test-model-v1",
+    identity: {
+      provider: "test-provider",
+      model: "test-model",
+      promptVersion: "test-prompt-v1",
+      methodologyVersion: "test-model-v1",
+    },
+    async classifyAll() {
+      return {
+        outcomes: [{
+          kind: "success",
+          source: "provider",
+          repositoryId: 1,
+          decision: "ai-related",
+          evidence: "AI metadata.",
+        }],
+        stats: {
+          identity: { ...this.identity, model: "different-model" },
+          transmittedFields: ["repository_id", "description", "topics"],
+          eligible: 1,
+          cacheHits: 0,
+          providerDecisions: 1,
+          invocations: 1,
+          failed: 0,
+          budgetExhausted: 0,
+          complete: true,
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    analyzeCandidates(candidate, stubReadmes({}), {
+      classifier,
+      observedAt,
+    }),
+    /identity is inconsistent/,
+  );
+});
+
+test("model failures remain unavailable with typed coverage and no README request", async () => {
+  const candidate = candidateSnapshot([
+    candidateRepository("owner/repository", 1, {
+      description: "Unclassified repository.",
+    }),
+  ]);
+  const classifier: BatchModelAIClassifier = {
+    kind: "model",
+    version: "test-model-v1",
+    identity: {
+      provider: "test-provider",
+      model: "test-model",
+      promptVersion: "test-prompt-v1",
+      methodologyVersion: "test-model-v1",
+    },
+    async classifyAll() {
+      return {
+        outcomes: [{
+          kind: "failure",
+          repositoryId: 1,
+          code: "model-budget-exhausted",
+        }],
+        stats: {
+          identity: this.identity,
+          transmittedFields: ["repository_id", "description", "topics"],
+          eligible: 1,
+          cacheHits: 0,
+          providerDecisions: 0,
+          invocations: 0,
+          failed: 0,
+          budgetExhausted: 1,
+          complete: false,
+        },
+      };
+    },
+  };
+  const readmeRequests: string[] = [];
+  const snapshot = await analyzeCandidates(candidate, {
+    authenticated: false,
+    async getReadme(repository) {
+      readmeRequests.push(repository);
+      return "README";
+    },
+  }, { classifier, observedAt });
+
+  assert.equal(
+    snapshot.repositories[0]?.ai_relevance.decision,
+    "unavailable",
+  );
+  assert.deepEqual(readmeRequests, []);
+  assert.deepEqual(snapshot.source.coverage_errors, [{
+    source: "model",
+    target: "repository:1",
+    status: null,
+    code: "model-budget-exhausted",
+    message: "Model classification invocation budget was exhausted.",
+  }]);
+  assert.equal(snapshot.source.coverage_complete, false);
 });

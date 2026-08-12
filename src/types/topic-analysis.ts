@@ -21,13 +21,19 @@ export interface AIRelevanceAssessment {
   score: number;
   decision: "ai-related" | "review" | "not-ai" | "unavailable";
   evidence: AIRelevanceEvidence[];
+  /** Concise model rationale. Added only for successful model decisions. */
+  model_evidence?: string;
 }
 
 export interface TopicAnalysisCoverageError {
-  source: "candidate" | "github";
+  source: "candidate" | "github" | "model";
   target: string;
   status: number | null;
   message: string;
+  code?:
+    | "model-request-failed"
+    | "model-response-invalid"
+    | "model-budget-exhausted";
 }
 
 export interface TopicAnalysisRepository {
@@ -62,6 +68,22 @@ export interface TopicAnalysisSnapshot {
     github_authenticated: boolean;
     coverage_complete: boolean;
     coverage_errors: TopicAnalysisCoverageError[];
+    model_classification?: {
+      provider: string;
+      model: string;
+      prompt_version: string;
+      methodology_version: string;
+      transmitted_fields: Array<
+        "repository_id" | "description" | "topics"
+      >;
+      eligible: number;
+      cache_hits: number;
+      provider_decisions: number;
+      invocations: number;
+      failed: number;
+      budget_exhausted: number;
+      complete: boolean;
+    };
   };
   keyword_census: {
     repositories_analyzed: number;

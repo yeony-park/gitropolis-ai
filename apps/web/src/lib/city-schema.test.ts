@@ -84,6 +84,26 @@ test("accepts city-v1 snapshots created before additive explanation fields", () 
   assert.equal(parsed.repositories[0]?.description, undefined);
   assert.equal(parsed.repositories[0]?.detection_explanation, undefined);
   assert.equal(parsed.source.archive_coverage_complete, undefined);
+  assert.equal(parsed.source.model_classification, undefined);
+});
+
+test("accepts optional model classifier identity", () => {
+  const input = legacyCitySnapshot() as Record<string, unknown>;
+  const source = input.source as Record<string, unknown>;
+  source.model_classification = {
+    provider: "test-provider",
+    model: "test-model",
+    prompt_version: "ai-relevance-prompt-v1",
+    methodology_version: "ai-relevance-model-v1",
+  };
+
+  const parsed = citySnapshotSchema.parse(input);
+  assert.deepEqual(parsed.source.model_classification, {
+    provider: "test-provider",
+    model: "test-model",
+    prompt_version: "ai-relevance-prompt-v1",
+    methodology_version: "ai-relevance-model-v1",
+  });
 });
 
 test("distinguishes null descriptions and accepts observed detection signals", () => {
