@@ -200,6 +200,10 @@ export function buildCitySnapshot(inputs: CityBuilderInputs): CitySnapshot {
       community_rank: communityRank,
     };
   });
+  const modelClassification =
+    inputs.analysis.source.classifier_kind === "model"
+      ? inputs.analysis.source.model_classification
+      : undefined;
 
   return {
     schema_version: "city-v1",
@@ -245,6 +249,16 @@ export function buildCitySnapshot(inputs: CityBuilderInputs): CitySnapshot {
       metadata_selection_rule: inputs.activity.source.metadata_selection
         ? formatMetadataSelectionRule(inputs.activity.source.metadata_selection)
         : null,
+      ...(modelClassification
+        ? {
+            model_classification: {
+              provider: modelClassification.provider,
+              model: modelClassification.model,
+              prompt_version: modelClassification.prompt_version,
+              methodology_version: modelClassification.methodology_version,
+            },
+          }
+        : {}),
     },
     districts: CITY_DISTRICTS.map((district) => ({ ...district })),
     communities: buildCommunities(repositories, relatedKeywordCounts),

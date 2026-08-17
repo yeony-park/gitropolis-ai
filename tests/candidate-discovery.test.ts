@@ -395,10 +395,12 @@ test("discovery retains a candidate when GitHub enrichment fails", async () => {
 });
 
 test("analysis CLI requires a candidate input and bounds README length", () => {
-  assert.deepEqual(parseAnalysisArguments(["--input", "candidate.json"]), {
+  const defaults = parseAnalysisArguments(["--input", "candidate.json"]);
+  assert.deepEqual(defaults, {
     input: "candidate.json",
     maxReadmeCharacters: 12_000,
   });
+  assert.equal("modelClassification" in defaults, false);
   assert.throws(() => parseAnalysisArguments([]), /requires --input/);
   assert.throws(
     () =>
@@ -409,6 +411,100 @@ test("analysis CLI requires a candidate input and bounds README length", () => {
         "0",
       ]),
     /must be between 1 and 100000/,
+  );
+});
+
+test("analysis CLI supports an explicit bounded model opt-in", () => {
+  assert.deepEqual(
+    parseAnalysisArguments([
+      "--input",
+      "candidate.json",
+      "--model-command",
+      "/usr/local/bin/model-adapter",
+      "--model-provider",
+      "codex-cli",
+      "--model",
+      "gpt-5.6-terra",
+      "--model-cache",
+      "model-cache.json",
+      "--model-batch-size",
+      "12",
+      "--model-invocation-budget",
+      "7",
+      "--model-max-retries",
+      "2",
+    ]),
+    {
+      input: "candidate.json",
+      maxReadmeCharacters: 12_000,
+      modelClassification: {
+        command: "/usr/local/bin/model-adapter",
+        provider: "codex-cli",
+        model: "gpt-5.6-terra",
+        cachePath: "model-cache.json",
+        batchSize: 12,
+        invocationBudget: 7,
+        maxRetries: 2,
+      },
+    },
+  );
+});
+
+test("analysis CLI rejects incomplete or out-of-range model options", () => {
+  for (const arguments_ of [
+    ["--input", "candidate.json", "--model-command", "model-adapter"],
+    [
+      "--input",
+      "candidate.json",
+      "--model-provider",
+      "codex-cli",
+      "--model",
+      "gpt-5.6-terra",
+    ],
+    ["--input", "candidate.json", "--model-cache", "cache.json"],
+  ]) {
+    assert.throws(
+      () => parseAnalysisArguments(arguments_),
+      /requires --model-command, --model-provider, and --model/,
+    );
+  }
+
+  const required = [
+    "--input",
+    "candidate.json",
+    "--model-command",
+    "model-adapter",
+    "--model-provider",
+    "codex-cli",
+    "--model",
+    "gpt-5.6-terra",
+  ];
+  assert.throws(
+    () =>
+      parseAnalysisArguments([
+        ...required,
+        "--model-batch-size",
+        "0",
+      ]),
+    /--model-batch-size must be between 1 and 100/,
+  );
+  assert.throws(
+    () =>
+      parseAnalysisArguments([
+        ...required,
+        "--model-invocation-budget",
+        "-1",
+      ]),
+    /--model-invocation-budget must be between 0 and 10000/,
+  );
+  assert.throws(
+    () =>
+      parseAnalysisArguments([
+        ...required,
+        "--model-max-retries",
+        "3",
+      ]),
+    /--model-max-retries must be between 0 and 2/,
   );
 });
 

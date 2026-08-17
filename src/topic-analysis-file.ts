@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -53,11 +54,15 @@ export function defaultTopicAnalysisPath(
 ): string {
   const from = snapshot.candidate_window.from.replaceAll(":", "-");
   const to = snapshot.candidate_window.to.replaceAll(":", "-");
+  const classifierSuffix =
+    snapshot.source.classifier_kind === "model"
+      ? `-model-${modelIdentityFingerprint(snapshot)}`
+      : "";
   return join(
     resolve(projectDirectory),
     ".gitropolis",
     "observations",
-    `${from}_${to}.json`,
+    `${from}_${to}${classifierSuffix}.json`,
   );
 }
 
@@ -92,4 +97,19 @@ export async function readTopicAnalysisSnapshot(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function modelIdentityFingerprint(snapshot: TopicAnalysisSnapshot): string {
+  const identity = snapshot.source.model_classification;
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        provider: identity?.provider ?? null,
+        model: identity?.model ?? null,
+        prompt_version: identity?.prompt_version ?? null,
+        methodology_version: snapshot.methodology_version,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 12);
 }

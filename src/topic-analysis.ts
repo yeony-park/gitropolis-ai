@@ -1,4 +1,10 @@
 import { GitHubApiError, type GitHubApiClient } from "./github/client.js";
+import type {
+  BatchModelAIClassifier,
+  ModelClassificationInput,
+  ModelClassificationOutcome,
+  ModelClassificationRun,
+} from "./model-classification.js";
 import type { CandidateSnapshot } from "./types/candidate.js";
 import type {
   AIRelevanceAssessment,
@@ -172,13 +178,17 @@ export interface AIClassificationInput {
   observations: readonly KeywordObservation[];
 }
 
-export interface AIRelevanceClassifier {
-  readonly kind: "rules" | "model";
+export interface RuleAIRelevanceClassifier {
+  readonly kind: "rules";
   readonly version: string;
   classify(input: AIClassificationInput): Promise<AIRelevanceAssessment>;
 }
 
-export const ruleBasedAIClassifier: AIRelevanceClassifier = {
+export type AIRelevanceClassifier =
+  | RuleAIRelevanceClassifier
+  | BatchModelAIClassifier;
+
+export const ruleBasedAIClassifier: RuleAIRelevanceClassifier = {
   kind: "rules",
   version: "ai-relevance-rules-v1",
   async classify(input): Promise<AIRelevanceAssessment> {
@@ -235,6 +245,27 @@ export async function analyzeCandidates(
 
   const coverageErrors: TopicAnalysisCoverageError[] = [];
   const repositories: TopicAnalysisRepository[] = [];
+  let modelRun: ModelClassificationRun | null = null;
+  const modelOutcomes = new Map<number, ModelClassificationOutcome>();
+  if (classifier.kind === "model") {
+    const inputsById = new Map<number, ModelClassificationInput>();
+    for (const repository of candidate.repositories) {
+      const github = repository.github;
+      if (github && !inputsById.has(github.id)) {
+        inputsById.set(github.id, {
+          repositoryId: github.id,
+          description: github.description,
+          topics: github.topics,
+        });
+      }
+    }
+    const modelInputs = [...inputsById.values()];
+    modelRun = await classifier.classifyAll(modelInputs);
+    validateModelRun(classifier, modelInputs, modelRun);
+    for (const outcome of modelRun.outcomes) {
+      modelOutcomes.set(outcome.repositoryId, outcome);
+    }
+  }
   let readmeRequestsStopped = false;
   let stoppedRateLimitStatus: number | null = null;
 
@@ -261,8 +292,18 @@ export async function analyzeCandidates(
       continue;
     }
 
+    const modelOutcome =
+      classifier.kind === "model" ? modelOutcomes.get(github.id) : null;
+    if (classifier.kind === "model" && !modelOutcome) {
+      throw new Error(`Missing model classification result: ${github.id}`);
+    }
+    const shouldReadReadme =
+      classifier.kind === "rules"
+        ? github.readme !== null
+        : modelOutcome?.kind === "success" &&
+          modelOutcome.decision !== "not-ai";
     let readme: string | null = null;
-    if (github.readme) {
+    if (shouldReadReadme) {
       const readmeTarget = `/repos/${repository.full_name}/readme`;
       if (readmeRequestsStopped) {
         coverageErrors.push({
@@ -303,17 +344,43 @@ export async function analyzeCandidates(
       github.description,
       readme,
     );
-    repositories.push({
-      repository_id: github.id,
-      full_name: repository.full_name,
-      ai_relevance: await classifier.classify({
+    let aiRelevance: AIRelevanceAssessment;
+    if (classifier.kind === "rules") {
+      aiRelevance = await classifier.classify({
         repositoryId: github.id,
         fullName: repository.full_name,
         description: github.description,
         topics: github.topics,
         readme,
         observations,
-      }),
+      });
+    } else if (modelOutcome?.kind === "success") {
+      aiRelevance = modelAssessment(
+        modelOutcome.decision,
+        modelOutcome.evidence,
+      );
+    } else {
+      const code =
+        modelOutcome?.kind === "failure"
+          ? modelOutcome.code
+          : "model-response-invalid";
+      coverageErrors.push({
+        source: "model",
+        target: `repository:${github.id}`,
+        status: null,
+        code,
+        message: modelCoverageMessage(code),
+      });
+      aiRelevance = {
+        score: 0,
+        decision: "unavailable",
+        evidence: [],
+      };
+    }
+    repositories.push({
+      repository_id: github.id,
+      full_name: repository.full_name,
+      ai_relevance: aiRelevance,
       community_status: null,
       observations,
     });
@@ -338,10 +405,118 @@ export async function analyzeCandidates(
       coverage_complete:
         candidate.source.coverage_complete && coverageErrors.length === 0,
       coverage_errors: coverageErrors,
+      ...(modelRun
+        ? {
+            model_classification: {
+              provider: modelRun.stats.identity.provider,
+              model: modelRun.stats.identity.model,
+              prompt_version: modelRun.stats.identity.promptVersion,
+              methodology_version:
+                modelRun.stats.identity.methodologyVersion,
+              transmitted_fields: [...modelRun.stats.transmittedFields],
+              eligible: modelRun.stats.eligible,
+              cache_hits: modelRun.stats.cacheHits,
+              provider_decisions: modelRun.stats.providerDecisions,
+              invocations: modelRun.stats.invocations,
+              failed: modelRun.stats.failed,
+              budget_exhausted: modelRun.stats.budgetExhausted,
+              complete: modelRun.stats.complete,
+            },
+          }
+        : {}),
     },
     keyword_census: keywordCensus,
     repositories,
   };
+}
+
+function validateModelRun(
+  classifier: BatchModelAIClassifier,
+  inputs: readonly ModelClassificationInput[],
+  run: ModelClassificationRun,
+): void {
+  const identity = classifier.identity;
+  const stats = run.stats;
+  if (
+    classifier.version !== identity.methodologyVersion ||
+    stats.identity.provider !== identity.provider ||
+    stats.identity.model !== identity.model ||
+    stats.identity.promptVersion !== identity.promptVersion ||
+    stats.identity.methodologyVersion !== identity.methodologyVersion
+  ) {
+    throw new Error("Model classification identity is inconsistent.");
+  }
+  const requestedIds = new Set(inputs.map(({ repositoryId }) => repositoryId));
+  const outcomeIds = new Set<number>();
+  let cacheHits = 0;
+  let providerDecisions = 0;
+  let failed = 0;
+  let budgetExhausted = 0;
+  for (const outcome of run.outcomes) {
+    if (
+      !requestedIds.has(outcome.repositoryId) ||
+      outcomeIds.has(outcome.repositoryId)
+    ) {
+      throw new Error("Model classification returned an invalid repository set.");
+    }
+    outcomeIds.add(outcome.repositoryId);
+    if (outcome.kind === "success") {
+      if (outcome.source === "cache") {
+        cacheHits += 1;
+      } else {
+        providerDecisions += 1;
+      }
+    } else if (outcome.code === "model-budget-exhausted") {
+      budgetExhausted += 1;
+    } else {
+      failed += 1;
+    }
+  }
+  const complete = failed === 0 && budgetExhausted === 0;
+  if (
+    outcomeIds.size !== requestedIds.size ||
+    stats.eligible !== requestedIds.size ||
+    stats.cacheHits !== cacheHits ||
+    stats.providerDecisions !== providerDecisions ||
+    stats.failed !== failed ||
+    stats.budgetExhausted !== budgetExhausted ||
+    stats.complete !== complete ||
+    !Number.isSafeInteger(stats.invocations) ||
+    stats.invocations < 0 ||
+    stats.transmittedFields.length !== 3 ||
+    stats.transmittedFields[0] !== "repository_id" ||
+    stats.transmittedFields[1] !== "description" ||
+    stats.transmittedFields[2] !== "topics"
+  ) {
+    throw new Error("Model classification statistics are inconsistent.");
+  }
+}
+
+function modelAssessment(
+  decision: "ai-related" | "review" | "not-ai",
+  evidence: string,
+): AIRelevanceAssessment {
+  return {
+    score: decision === "ai-related" ? 1 : decision === "review" ? 0.5 : 0,
+    decision,
+    evidence: [],
+    model_evidence: evidence,
+  };
+}
+
+function modelCoverageMessage(
+  code:
+    | "model-request-failed"
+    | "model-response-invalid"
+    | "model-budget-exhausted",
+): string {
+  if (code === "model-request-failed") {
+    return "Model classification request failed.";
+  }
+  if (code === "model-budget-exhausted") {
+    return "Model classification invocation budget was exhausted.";
+  }
+  return "Model classification response was invalid.";
 }
 
 function buildKeywordCensus(

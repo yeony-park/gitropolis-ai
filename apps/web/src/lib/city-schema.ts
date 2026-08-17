@@ -85,6 +85,12 @@ export const citySnapshotSchema = z.object({
     excluded_missing_metadata: z.number().int().nonnegative(),
     metadata_collected_at: z.string().datetime().nullable().optional(),
     metadata_selection_rule: z.string().nullable().optional(),
+    model_classification: z.object({
+      provider: z.string().min(1),
+      model: z.string().min(1),
+      prompt_version: z.string().min(1),
+      methodology_version: z.string().min(1),
+    }).optional(),
   }),
   districts: z.array(cityDistrictSchema),
   communities: z.array(cityCommunitySchema),

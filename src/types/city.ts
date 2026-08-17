@@ -49,6 +49,13 @@ export interface CityDetectionExplanation {
   };
 }
 
+export interface CityModelClassificationIdentity {
+  provider: string;
+  model: string;
+  prompt_version: string;
+  methodology_version: string;
+}
+
 export interface CityRepository {
   repository_id: number;
   full_name: string;
@@ -111,6 +118,8 @@ export interface CitySnapshot {
     metadata_collected_at?: string | null;
     /** Human-readable form of the deterministic metadata selection threshold. */
     metadata_selection_rule?: string | null;
+    /** Present only when topic analysis used a model classifier. */
+    model_classification?: CityModelClassificationIdentity;
   };
   districts: CityDistrict[];
   communities: CityCommunity[];
