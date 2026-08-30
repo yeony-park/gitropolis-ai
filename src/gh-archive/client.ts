@@ -5,7 +5,7 @@ import { createGunzip } from "node:zlib";
 
 export const GH_ARCHIVE_DATA_URL = "https://data.gharchive.org";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
-const DEFAULT_MAX_RECORD_LINES = 16;
+const DEFAULT_MAX_RECORD_LINES = 128;
 const DEFAULT_MAX_RECORD_BYTES = 1_048_576;
 
 export interface GHArchiveEvent {

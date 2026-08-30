@@ -141,6 +141,59 @@ test("GH Archive client recovers literal newlines inside a JSON string", async (
   ]);
 });
 
+test("GH Archive client recovers a valid 87-line event by default", async () => {
+  const multilineEvent = {
+    id: "1005",
+    type: "IssuesEvent",
+    payload: {
+      issue: {
+        body: Array.from(
+          { length: 87 },
+          (_, index) => `line ${index + 1}`,
+        ).join("\n"),
+      },
+    },
+  };
+  const followingEvent = {
+    id: "1006",
+    type: "WatchEvent",
+    repo: { name: "owner/repository" },
+    payload: { action: "started" },
+    created_at: "2026-07-30T03:30:00Z",
+  };
+  const malformedMultiline = JSON.stringify(multilineEvent).replaceAll(
+    "\\n",
+    "\n",
+  );
+  const client = new GHArchiveClient({
+    fetchImplementation: async () =>
+      new Response(
+        gzipSync(`${malformedMultiline}\n${JSON.stringify(followingEvent)}\n`),
+      ),
+  });
+  const records = [];
+
+  for await (const record of client.recordsForHour(
+    new Date("2026-07-30T03:00:00Z"),
+  )) {
+    records.push(record);
+  }
+
+  assert.deepEqual(records, [
+    {
+      kind: "event",
+      line: 1,
+      event: multilineEvent,
+      recovered_lines: 87,
+    },
+    {
+      kind: "event",
+      line: 88,
+      event: followingEvent,
+    },
+  ]);
+});
+
 test("GH Archive client bounds multiline recovery and preserves a following event", async () => {
   const followingEvent = {
     id: "1003",
