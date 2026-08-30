@@ -231,9 +231,10 @@ deterministically. Missing or invalid IDs, malformed records, semantically
 invalid WatchEvents, failed hourly files, and partial streams remain coverage
 errors. A fully recovered record is counted in `recovered_records` and does not
 make coverage incomplete. Recovery is limited to structurally incomplete JSON
-objects whose string value remains open, with fixed line and byte bounds; the
-parser does not join arbitrary malformed records. Accepted WatchEvent totals in
-the source, daily buckets, repository records, and
+objects whose string value remains open. The default recovery bounds are 128
+physical lines and 1 MiB per logical record; the parser does not join arbitrary
+malformed records. Accepted WatchEvent totals in the source, daily buckets,
+repository records, and
 `event_integrity.unique_watch_events` describe the same deduplicated population.
 
 An integrity verification reran 2026-07-01 through 2026-07-07 and reproduced
@@ -257,6 +258,13 @@ lines, and left zero unrecoverable records. The recovered sample contained nine
 `IssueCommentEvent` records and two `CreateEvent` records, not WatchEvents. This
 sample verifies the recovery path but does not guarantee that every future
 archive defect will be recoverable.
+
+An August 2026 continuity run exposed valid records longer than the original
+16-line default, including an 87-line `IssuesEvent` on 2026-08-29. Increasing
+the default line bound to 128 recovered those records while retaining the 1 MiB
+byte bound. Reprocessing 2026-08-21 through 2026-08-29 then completed all
+216 requested hours with zero malformed records and no change to accepted
+WatchEvent totals.
 
 ## Repository lifecycle
 
